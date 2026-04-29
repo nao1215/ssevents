@@ -14,19 +14,11 @@ pub fn new() -> ReconnectState {
 pub fn update(state: ReconnectState, item: event.Item) -> ReconnectState {
   case item {
     event.Comment(_) -> state
-    event.EventItem(ev) -> {
-      let last_event_id = case event.id_of(ev) {
-        Some(id) -> Some(id)
-        None -> state.last_event_id
-      }
-
-      let retry_value = case event.retry_of(ev) {
-        Some(retry) -> Some(retry)
-        None -> state.retry
-      }
-
-      ReconnectState(last_event_id: last_event_id, retry: retry_value)
-    }
+    event.EventItem(ev) ->
+      ReconnectState(
+        last_event_id: option.or(event.id_of(ev), state.last_event_id),
+        retry: option.or(event.retry_of(ev), state.retry),
+      )
   }
 }
 
