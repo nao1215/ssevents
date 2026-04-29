@@ -164,7 +164,10 @@ pub fn decode_bytes_with_limits_matches_string_decode_test() {
     )
   let input = "event: ping\ndata: hello\n\n"
 
-  ssevents.decode_bytes_with_limits(bit_array.from_string(input), limits: limits)
+  ssevents.decode_bytes_with_limits(
+    bit_array.from_string(input),
+    limits: limits,
+  )
   |> should.equal(ssevents.decode_with_limits(input, limits: limits))
 }
 
@@ -313,6 +316,33 @@ pub fn incremental_push_invalid_utf8_returns_error_without_advancing_test() {
   items |> should.equal([])
 }
 
+pub fn incremental_push_handles_crlf_split_across_chunks_test() {
+  let state = ssevents.new_decoder()
+  let assert Ok(#(state, items1)) =
+    ssevents.push(state, <<"data: hello\r":utf8>>)
+  items1 |> should.equal([])
+
+  let assert Ok(#(state, items2)) =
+    ssevents.push(state, <<"\ndata: world\r\n\r\n":utf8>>)
+  items2 |> should.equal([EventItem(ssevents.new("hello\nworld"))])
+
+  let assert Ok(items3) = ssevents.finish(state)
+  items3 |> should.equal([])
+}
+
+pub fn incremental_push_handles_crlf_with_one_byte_chunks_test() {
+  let chunks =
+    <<"data: hello\r\ndata: world\r\n\r\n":utf8>>
+    |> bytes_to_single_byte_chunks
+
+  let assert Ok(#(state, items)) =
+    push_chunks(ssevents.new_decoder(), chunks, [])
+  items |> should.equal([EventItem(ssevents.new("hello\nworld"))])
+
+  let assert Ok(trailing) = ssevents.finish(state)
+  trailing |> should.equal([])
+}
+
 pub fn encode_decode_roundtrip_items_test() {
   let items = [
     ssevents.comment("meta"),
@@ -395,4 +425,40 @@ pub fn stream_decode_stream_test() {
   |> ssevents.decode_stream
   |> stream.to_list
   |> should.equal([Ok(Comment("hi")), Ok(EventItem(ssevents.new("x")))])
+}
+
+fn bytes_to_single_byte_chunks(bits: BitArray) -> List(BitArray) {
+  bytes_to_single_byte_chunks_loop(bits, [])
+}
+
+fn bytes_to_single_byte_chunks_loop(
+  bits: BitArray,
+  acc_rev: List(BitArray),
+) -> List(BitArray) {
+  case bits {
+    <<>> -> list.reverse(acc_rev)
+    <<byte, rest:bytes>> ->
+      bytes_to_single_byte_chunks_loop(rest, [<<byte>>, ..acc_rev])
+    _ -> list.reverse(acc_rev)
+  }
+}
+
+fn push_chunks(
+  state: ssevents.DecodeState,
+  chunks: List(BitArray),
+  emitted_rev: List(ssevents.Item),
+) -> Result(#(ssevents.DecodeState, List(ssevents.Item)), ssevents.SseError) {
+  case chunks {
+    [] -> Ok(#(state, list.reverse(emitted_rev)))
+    [chunk, ..rest] ->
+      case ssevents.push(state, chunk) {
+        Error(error) -> Error(error)
+        Ok(#(next_state, emitted)) ->
+          push_chunks(
+            next_state,
+            rest,
+            list.reverse(emitted) |> list.append(emitted_rev),
+          )
+      }
+  }
 }
