@@ -100,6 +100,36 @@ pub fn encode_items_with_crlf_test() {
   decoded |> should.equal(items)
 }
 
+pub fn encode_bytes_matches_string_encoding_test() {
+  let event =
+    ssevents.named("job.update", "payload")
+    |> ssevents.id("cursor-1")
+
+  ssevents.encode_bytes(event)
+  |> should.equal(bit_array.from_string(ssevents.encode(event)))
+}
+
+pub fn encode_item_bytes_matches_string_encoding_test() {
+  let item = ssevents.comment("meta")
+
+  ssevents.encode_item_bytes(item)
+  |> should.equal(bit_array.from_string(ssevents.encode_item(item)))
+}
+
+pub fn encode_items_bytes_matches_item_concatenation_test() {
+  let items = [
+    ssevents.comment("meta"),
+    ssevents.new("payload") |> ssevents.event_item,
+  ]
+
+  ssevents.encode_items_bytes(items)
+  |> should.equal(
+    items
+    |> list.map(ssevents.encode_item_bytes)
+    |> bit_array.concat,
+  )
+}
+
 pub fn decode_simple_event_test() {
   let assert Ok([EventItem(event)]) =
     ssevents.decode("event: ping\ndata: hello\nid: 1\nretry: 1000\n\n")
@@ -113,6 +143,27 @@ pub fn decode_simple_event_test() {
 pub fn decode_comment_and_event_test() {
   let assert Ok(items) = ssevents.decode(": hello\ndata: world\n\n")
   items |> should.equal([Comment("hello"), EventItem(ssevents.new("world"))])
+}
+
+pub fn decode_bytes_matches_string_decode_test() {
+  let input = ": hello\ndata: world\n\n"
+
+  ssevents.decode_bytes(bit_array.from_string(input))
+  |> should.equal(ssevents.decode(input))
+}
+
+pub fn decode_bytes_with_limits_matches_string_decode_test() {
+  let limits =
+    ssevents.new_limits(
+      max_line_bytes: 100,
+      max_event_bytes: 100,
+      max_data_lines: 10,
+      max_retry_value: 1000,
+    )
+  let input = "event: ping\ndata: hello\n\n"
+
+  ssevents.decode_bytes_with_limits(bit_array.from_string(input), limits: limits)
+  |> should.equal(ssevents.decode_with_limits(input, limits: limits))
 }
 
 pub fn decode_unknown_fields_are_ignored_test() {
