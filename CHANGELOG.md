@@ -71,6 +71,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `TooManyDataLines` limit check. Adding a new validated field now
   costs one entry in the `case`, not a copy-pasted block.
 
+- The monolithic `test/ssevents_test.gleam` is split into
+  module-aligned files under `test/ssevents/`: `event_test`,
+  `encoder_test`, `decoder_test`, `stream_test`, `reconnect_test`,
+  `validate_test`, and `error_test`. The top-level
+  `test/ssevents_test.gleam` keeps the gleeunit `main` entry, the
+  package-name smoke check, the cross-cutting encode/decode roundtrip,
+  and the facade-vs-submodule `error_to_string` parity check. Total
+  test count is preserved (40 tests, both Erlang and JavaScript
+  targets).
+
 ### Performance
 
 - `decoder.ends_with_cr` is now O(1): it slices the last byte of the
