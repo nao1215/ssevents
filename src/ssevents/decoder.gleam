@@ -443,8 +443,9 @@ fn reverse_bytes(input: BitArray, acc: BitArray) -> BitArray {
 }
 
 fn ends_with_cr(bits: BitArray) -> Bool {
-  case reverse_bytes(bits, <<>>) {
-    <<13, _rest:bytes>> -> True
-    _ -> False
+  let size = bit_array.byte_size(bits)
+  case size {
+    0 -> False
+    _ -> bit_array.slice(bits, at: size - 1, take: 1) == Ok(<<13>>)
   }
 }

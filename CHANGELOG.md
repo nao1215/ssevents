@@ -30,3 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `error.to_string` for `InvalidRetry` now states the constraint
   ("must be a non-negative integer") so the message is actionable
   without consulting the SSE spec.
+
+### Performance
+
+- `decoder.ends_with_cr` is now O(1): it slices the last byte of the
+  buffered chunk instead of reversing the whole buffer just to look at
+  the final byte. Removes a per-`push` cost that scaled with the
+  configured `max_event_bytes`.
