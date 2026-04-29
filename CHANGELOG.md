@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   in-practice path through `decode_line` continues to reject invalid
   UTF-8 upstream, so observable behavior is unchanged for valid inputs.
 
+- `validate.validate_event_name` and `validate.validate_id` now share a
+  single `validate_no_forbidden_bytes` helper. No behavior change;
+  removes the duplicated body so adding a new validated field is a
+  one-liner.
+
 ### Performance
 
 - `decoder.ends_with_cr` is now O(1): it slices the last byte of the

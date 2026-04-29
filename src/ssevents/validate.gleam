@@ -6,16 +6,20 @@ import ssevents/error.{type SseError, EventTooLarge, InvalidField, InvalidRetry}
 import ssevents/event
 
 pub fn validate_event_name(name: String) -> Result(String, SseError) {
-  case contains_forbidden_text_byte(name) {
-    True -> Error(InvalidField("event"))
-    False -> Ok(name)
-  }
+  validate_no_forbidden_bytes("event", name)
 }
 
 pub fn validate_id(id: String) -> Result(String, SseError) {
-  case contains_forbidden_text_byte(id) {
-    True -> Error(InvalidField("id"))
-    False -> Ok(id)
+  validate_no_forbidden_bytes("id", id)
+}
+
+fn validate_no_forbidden_bytes(
+  field_name: String,
+  value: String,
+) -> Result(String, SseError) {
+  case contains_forbidden_text_byte(value) {
+    True -> Error(InvalidField(field_name))
+    False -> Ok(value)
   }
 }
 
