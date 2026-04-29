@@ -240,9 +240,8 @@ pub fn decode_bytes_only_strips_one_bom_test() {
 }
 
 pub fn decode_bytes_no_bom_unchanged_test() {
-  // Non-BOM bytes that happen to start with 0xEF (e.g., a UTF-8
-  // multi-byte char like `ï` = C3 AF, not 0xEF) must not trigger
-  // BOM stripping. Use a clean ASCII case to confirm baseline.
+  // Baseline: a stream that does not start with the BOM byte
+  // sequence (`EF BB BF`) decodes the same way it always did.
   let body = <<"data: hello\n\n":utf8>>
   let assert Ok(items) = ssevents.decode_bytes(body)
   items |> should.equal([EventItem(ssevents.new("hello"))])
