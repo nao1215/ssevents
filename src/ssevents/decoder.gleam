@@ -267,12 +267,24 @@ fn apply_field_parts(
             fn(s, v) { DecodeState(..s, id: Some(v)) },
           )
         "retry" ->
-          apply_validated_field(
-            state,
-            parse_retry(value, state.limits),
-            next_event_bytes,
-            fn(s, v) { DecodeState(..s, retry: Some(v)) },
-          )
+          // WHATWG SSE §9.2.6: "If the field value consists of only
+          // ASCII digits ... Otherwise, ignore the field." Drop the
+          // field silently when the value isn't all ASCII digits
+          // (negative `-100`, decimal `12.5`, empty, etc.). Values
+          // that *are* all digits but exceed `max_retry_value` are
+          // still surfaced as `Error(InvalidRetry(_))` because that
+          // limit is a per-decoder safety bound, not a spec rule.
+          case is_ascii_digit_string(value) {
+            False ->
+              Ok(#(DecodeState(..state, event_bytes: next_event_bytes), []))
+            True ->
+              apply_validated_field(
+                state,
+                parse_retry(value, state.limits),
+                next_event_bytes,
+                fn(s, v) { DecodeState(..s, retry: Some(v)) },
+              )
+          }
         _ -> Ok(#(DecodeState(..state, event_bytes: next_event_bytes), []))
       }
   }
