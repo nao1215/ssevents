@@ -251,6 +251,46 @@ pub fn decode_bytes_no_bom_unchanged_test() {
   items |> should.equal([EventItem(ssevents.new("hello"))])
 }
 
+// WHATWG SSE §9.2.5: lone CR (U+000D) is a line terminator alongside
+// CRLF and lone LF.
+
+pub fn decode_lone_cr_line_separator_test() {
+  // `data: a\rdata: b\r\r` is the same shape as `data: a\ndata: b\n\n`
+  // but with lone-CR terminators. Should yield one event with data
+  // "a\nb" (multi-line data lines join with LF per §9.2.6).
+  let body = <<"data: a\rdata: b\r\r":utf8>>
+  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  ssevents.data_of(event) |> should.equal("a\nb")
+}
+
+pub fn decode_lone_cr_terminates_event_test() {
+  // Single event terminated by `\r\r` (blank line via lone CR).
+  let body = <<"data: hello\r\r":utf8>>
+  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  ssevents.data_of(event) |> should.equal("hello")
+}
+
+pub fn decode_mixed_lone_cr_and_lf_test() {
+  // Mixed terminators in the same stream are legal per §9.2.5.
+  let body = <<"data: a\rdata: b\ndata: c\r\n\r":utf8>>
+  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  ssevents.data_of(event) |> should.equal("a\nb\nc")
+}
+
+pub fn finish_with_trailing_lone_cr_test() {
+  // A buffer ending in CR with nothing after is a lone-CR terminator
+  // at finish time (no more bytes are coming).
+  let state = ssevents.new_decoder()
+  let assert Ok(#(state, items1)) =
+    ssevents.push(state, <<"data: hello\r":utf8>>)
+  // CR-at-end is ambiguous mid-stream, so push doesn't emit yet.
+  items1 |> should.equal([])
+  // finish treats the trailing CR as a lone-CR terminator and emits
+  // the unterminated event with `data: hello`.
+  let assert Ok(items) = ssevents.finish(state)
+  items |> should.equal([EventItem(ssevents.new("hello"))])
+}
+
 // WHATWG SSE §9.2.6: retry with non-ASCII-digit value must be
 // silently ignored, not error. The surrounding event still dispatches.
 

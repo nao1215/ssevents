@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Decoder: lone CR (U+000D) is now accepted as a line separator** per
+  WHATWG SSE §9.2.5, alongside CRLF and lone LF. A stream like
+  `data: a\rdata: b\r\r` now decodes the same as the LF-terminated
+  shape (one event with data `"a\nb"`). The incremental decoder still
+  waits when a buffer ends with CR (could become CRLF on the next
+  push), but `finish` on a buffer ending in CR is no longer an
+  `Error(UnexpectedEnd)` — the trailing CR is treated as a lone-CR
+  terminator since no more bytes are coming. (#38)
 - **Decoder: `retry` field that isn't all ASCII digits is now silently
   ignored** per WHATWG SSE §9.2.6, instead of failing the whole decode
   with `Error(InvalidRetry(value))`. Affects `12.5` (decimal),

@@ -15,7 +15,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/string
 import ssevents/error.{
   type SseError, EventTooLarge, InvalidRetry, InvalidUtf8, LineTooLong,
-  TooManyDataLines, UnexpectedEnd,
+  TooManyDataLines,
 }
 import ssevents/event
 import ssevents/limit
@@ -121,29 +121,44 @@ fn maybe_strip_bom(state: DecodeState) -> DecodeState {
 pub fn finish(state: DecodeState) -> Result(List(event.Item), SseError) {
   case state.buffer {
     <<>> -> finish_event(state)
-    _ ->
-      case ends_with_cr(state.buffer) {
-        True -> Error(UnexpectedEnd)
-        False ->
-          case decode_line(state.buffer) {
+    _ -> {
+      // WHATWG SSE §9.2.5: lone CR is a line terminator. At finish
+      // time no more bytes are coming, so a trailing CR cannot be
+      // the start of a CRLF — treat it as a lone-CR terminator and
+      // process the prefix as the final line.
+      let trimmed = strip_trailing_cr(state.buffer)
+      case decode_line(trimmed) {
+        Error(error) -> Error(error)
+        Ok(line) ->
+          case
+            process_line(
+              DecodeState(..state, buffer: <<>>),
+              line,
+              bit_array.byte_size(trimmed),
+            )
+          {
             Error(error) -> Error(error)
-            Ok(line) ->
-              case
-                process_line(
-                  DecodeState(..state, buffer: <<>>),
-                  line,
-                  bit_array.byte_size(state.buffer),
-                )
-              {
+            Ok(#(state_after_line, emitted)) ->
+              case finish_event(state_after_line) {
                 Error(error) -> Error(error)
-                Ok(#(state_after_line, emitted)) ->
-                  case finish_event(state_after_line) {
-                    Error(error) -> Error(error)
-                    Ok(trailing) -> Ok(list.append(emitted, trailing))
-                  }
+                Ok(trailing) -> Ok(list.append(emitted, trailing))
               }
           }
       }
+    }
+  }
+}
+
+fn strip_trailing_cr(bits: BitArray) -> BitArray {
+  case ends_with_cr(bits) {
+    False -> bits
+    True -> {
+      let size = bit_array.byte_size(bits)
+      case bit_array.slice(bits, 0, size - 1) {
+        Ok(prefix) -> prefix
+        Error(_) -> bits
+      }
+    }
   }
 }
 
@@ -488,12 +503,25 @@ fn find_newline(
   case remaining {
     <<>> -> Ok(None)
 
+    // CR followed by LF: CRLF terminator. Consume both bytes; the
+    // line content stays the same.
+    <<13, 10, rest:bytes>> ->
+      Ok(Some(#(reverse_bytes(acc_rev, <<>>), rest, line_bytes)))
+
+    // CR at the very end of the buffer: ambiguous — the next push may
+    // bring an LF and turn this into CRLF. Wait for more bytes.
+    <<13>> -> Ok(None)
+
+    // CR followed by a non-LF byte: WHATWG SSE §9.2.5 lone-CR
+    // terminator. The CRLF case is matched above so the byte after CR
+    // is guaranteed to not be LF here. Consume only the CR; the
+    // following byte stays in `rest` as the start of the next line.
+    <<13, after_cr:bytes>> ->
+      Ok(Some(#(reverse_bytes(acc_rev, <<>>), after_cr, line_bytes)))
+
+    // Lone LF (no preceding CR — CRLF was caught above).
     <<10, rest:bytes>> ->
-      case acc_rev {
-        <<13, acc_rest:bits>> ->
-          Ok(Some(#(reverse_bytes(acc_rest, <<>>), rest, line_bytes - 1)))
-        _ -> Ok(Some(#(reverse_bytes(acc_rev, <<>>), rest, line_bytes)))
-      }
+      Ok(Some(#(reverse_bytes(acc_rev, <<>>), rest, line_bytes)))
 
     <<byte, rest:bytes>> ->
       find_newline(rest, <<byte, acc_rev:bits>>, line_bytes + 1)
