@@ -5,7 +5,7 @@ import gleeunit
 import gleeunit/should
 import ssevents
 import ssevents/encoder
-import ssevents/error.{EventTooLarge, InvalidRetry, LineTooLong}
+import ssevents/error.{EventTooLarge, InvalidRetry, InvalidUtf8, LineTooLong}
 import ssevents/event.{Comment, EventItem}
 import ssevents/stream
 
@@ -150,6 +150,16 @@ pub fn decode_invalid_retry_test() {
   |> should.equal(Error(InvalidRetry("nope")))
 }
 
+pub fn decode_bytes_invalid_utf8_in_field_name_test() {
+  ssevents.decode_bytes(<<255, 58, 32, 120, 10, 10>>)
+  |> should.equal(Error(InvalidUtf8))
+}
+
+pub fn decode_bytes_invalid_utf8_in_field_value_test() {
+  ssevents.decode_bytes(<<100, 97, 116, 97, 58, 32, 255, 10, 10>>)
+  |> should.equal(Error(InvalidUtf8))
+}
+
 pub fn decode_line_too_long_test() {
   let limits =
     ssevents.new_limits(
@@ -202,6 +212,16 @@ pub fn incremental_push_handles_split_utf8_test() {
 
   let assert Ok(#(_state, items2)) = ssevents.push(state, chunk2)
   items2 |> should.equal([EventItem(ssevents.new("😀"))])
+}
+
+pub fn incremental_push_invalid_utf8_returns_error_without_advancing_test() {
+  let state = ssevents.new_decoder()
+
+  ssevents.push(state, <<100, 97, 116, 97, 58, 32, 255, 10>>)
+  |> should.equal(Error(InvalidUtf8))
+
+  let assert Ok(items) = ssevents.finish(state)
+  items |> should.equal([])
 }
 
 pub fn encode_decode_roundtrip_items_test() {
