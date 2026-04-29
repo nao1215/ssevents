@@ -48,3 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   buffered chunk instead of reversing the whole buffer just to look at
   the final byte. Removes a per-`push` cost that scaled with the
   configured `max_event_bytes`.
+
+### Documentation
+
+- Document the release process in the README so the `gleam.toml`
+  version, the `[Unreleased]` → `[X.Y.Z] - YYYY-MM-DD` rename, and the
+  `vX.Y.Z` tag that drives `release.yml` stay in sync.
