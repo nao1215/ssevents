@@ -24,3 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Cross-target test coverage for roundtrip behavior, partial chunks,
   UTF-8 chunk boundaries, retry parsing, comments, and limit
   violations.
+
+### Changed
+
+- `error.to_string` for `InvalidRetry` now states the constraint
+  ("must be a non-negative integer") so the message is actionable
+  without consulting the SSE spec.
