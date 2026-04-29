@@ -75,12 +75,11 @@ pub fn encode_response_body() -> String {
 
 ```gleam
 import ssevents
-import ssevents/error as sse_error
 
 pub fn decode_example(body: BitArray) {
   case ssevents.decode_bytes(body) {
     Ok(items) -> items
-    Error(error) -> [ssevents.comment(sse_error.to_string(error))]
+    Error(error) -> [ssevents.comment(ssevents.error_to_string(error))]
   }
 }
 ```

@@ -412,6 +412,13 @@ pub fn error_to_string_invalid_retry_test() {
   )
 }
 
+pub fn facade_error_to_string_test() {
+  ssevents.error_to_string(InvalidUtf8)
+  |> should.equal(error.to_string(InvalidUtf8))
+  ssevents.error_to_string(InvalidRetry("nope"))
+  |> should.equal(error.to_string(InvalidRetry("nope")))
+}
+
 pub fn stream_encode_stream_test() {
   let items = [
     ssevents.comment("a"),
