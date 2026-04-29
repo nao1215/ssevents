@@ -57,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   instead of interleaved; the original six levels of nested `case`
   collapse to two.
 
+- **Breaking:** the facade-level `Event` accessor is renamed
+  `ssevents.event_name` → `ssevents.name_of` so the four event
+  accessors share the `*_of` suffix already used by `data_of`,
+  `id_of`, and `retry_of`. Callers that read the event name through
+  the facade need to update the call site.
+
 ### Performance
 
 - `decoder.ends_with_cr` is now O(1): it slices the last byte of the
