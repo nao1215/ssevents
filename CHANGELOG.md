@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   replacing the explicit `case` ladders with a single idiomatic
   expression.
 
+- Decoder field splitting now propagates `Error(InvalidUtf8)` instead of
+  silently substituting an empty string when a `BitArray` → `String`
+  decode fails. The previous `unsafe_text` helper has been removed; the
+  in-practice path through `decode_line` continues to reject invalid
+  UTF-8 upstream, so observable behavior is unchanged for valid inputs.
+
 ### Performance
 
 - `decoder.ends_with_cr` is now O(1): it slices the last byte of the

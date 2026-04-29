@@ -196,7 +196,19 @@ fn apply_field(
   line: String,
   line_byte_size: Int,
 ) -> Result(#(DecodeState, List(event.Item)), SseError) {
-  let #(field, value) = split_field(line)
+  case split_field(line) {
+    Error(error) -> Error(error)
+    Ok(#(field, value)) ->
+      apply_field_parts(state, field, value, line_byte_size)
+  }
+}
+
+fn apply_field_parts(
+  state: DecodeState,
+  field: String,
+  value: String,
+  line_byte_size: Int,
+) -> Result(#(DecodeState, List(event.Item)), SseError) {
   let next_event_bytes = state.event_bytes + line_byte_size
 
   case next_event_bytes > limit.max_event_bytes(state.limits) {
@@ -329,7 +341,7 @@ fn has_meaningful_event_content(state: DecodeState) -> Bool {
   }
 }
 
-fn split_field(line: String) -> #(String, String) {
+fn split_field(line: String) -> Result(#(String, String), SseError) {
   split_field_bytes(bit_array.from_string(line), <<>>, line)
 }
 
@@ -337,16 +349,21 @@ fn split_field_bytes(
   remaining: BitArray,
   field_rev: BitArray,
   fallback: String,
-) -> #(String, String) {
+) -> Result(#(String, String), SseError) {
   case remaining {
-    <<>> -> #(fallback, "")
-    <<58, rest:bytes>> -> #(
-      reverse_bytes(field_rev, <<>>) |> unsafe_text,
-      rest |> unsafe_text |> trim_optional_leading_space,
-    )
+    <<>> -> Ok(#(fallback, ""))
+    <<58, rest:bytes>> ->
+      case bit_array.to_string(reverse_bytes(field_rev, <<>>)) {
+        Error(_) -> Error(InvalidUtf8)
+        Ok(field) ->
+          case bit_array.to_string(rest) {
+            Error(_) -> Error(InvalidUtf8)
+            Ok(value) -> Ok(#(field, trim_optional_leading_space(value)))
+          }
+      }
     <<byte, rest:bytes>> ->
       split_field_bytes(rest, <<byte, field_rev:bits>>, fallback)
-    _ -> #(fallback, "")
+    _ -> Error(InvalidUtf8)
   }
 }
 
@@ -396,13 +413,6 @@ fn decode_line(line: BitArray) -> Result(String, SseError) {
   case bit_array.to_string(line) {
     Ok(text) -> Ok(text)
     Error(_) -> Error(InvalidUtf8)
-  }
-}
-
-fn unsafe_text(bits: BitArray) -> String {
-  case bit_array.to_string(bits) {
-    Ok(text) -> text
-    Error(_) -> ""
   }
 }
 
