@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-29
+
 ### Added
 
 - `ssevents.error_to_string` re-exports `error.to_string` on the facade,
