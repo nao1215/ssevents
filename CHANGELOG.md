@@ -47,6 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   removes the duplicated body so adding a new validated field is a
   one-liner.
 
+- `stream.pull_decoded` is split into focused private helpers
+  (`step_decoded`, `advance_decoder`, `handle_push`, `handle_finish`,
+  `terminal_error`). Concerns (pending emission, chunk pulling,
+  decoder-result translation, error termination) are now layered
+  instead of interleaved; the original six levels of nested `case`
+  collapse to two.
+
 ### Performance
 
 - `decoder.ends_with_cr` is now O(1): it slices the last byte of the
