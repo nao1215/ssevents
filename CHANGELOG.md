@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Decoder: `id` field with U+0000 NUL is now silently ignored** per
+  WHATWG SSE §9.2.6, instead of failing the entire decode with
+  `Error(InvalidField("id"))`. The directive in the spec is to drop
+  the *field*, not to fail the *event* — a producer cannot signal
+  "ignore the entire event you were assembling" via a malformed id.
+  An event with a NUL-tainted id and a valid `data:` line now
+  dispatches with the data intact and `id_of(_) == None`. (#36)
 - **Decoder: leading UTF-8 BOM (U+FEFF) is now stripped** before
   parsing, per WHATWG SSE §9.2.5. Previously a stream that began
   with the three-byte BOM (`EF BB BF`) — common from UTF-8 emitters
