@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `ssevents.error_to_string` re-exports `error.to_string` on the facade,
+  so user code that needs to format an `SseError` no longer has to
+  reach into the `ssevents/error` submodule.
 - Initial Gleam project scaffold with package metadata, CI workflows,
   release automation, `just` tasks, mise toolchain pinning, and
   baseline source/test layout.
@@ -66,3 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Document the release process in the README so the `gleam.toml`
   version, the `[Unreleased]` → `[X.Y.Z] - YYYY-MM-DD` rename, and the
   `vX.Y.Z` tag that drives `release.yml` stay in sync.
+
+- The `ssevents` facade module is now declared the canonical public
+  surface in its top-of-file doc comment; submodules are an
+  implementation detail and may be reorganized between releases. The
+  README's "Decode a full body" example switches from
+  `ssevents/error.to_string` to the new facade-level
+  `ssevents.error_to_string` to match.

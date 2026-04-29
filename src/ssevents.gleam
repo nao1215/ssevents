@@ -1,11 +1,19 @@
-//// Top-level convenience facade for the `ssevents` package.
+//// Canonical public surface for the `ssevents` package.
 ////
 //// The focused modules (`ssevents/event`, `ssevents/encoder`,
 //// `ssevents/decoder`, `ssevents/reconnect`, `ssevents/validate`,
 //// `ssevents/limit`, `ssevents/heartbeat`, `ssevents/stream`,
-//// `ssevents/error`) carry the actual implementation. This module
-//// re-exports the most common types and functions so small callers can
-//// stay on a single import.
+//// `ssevents/error`) carry the actual implementation, but they are an
+//// implementation detail: external code should prefer the spellings
+//// re-exported here. This is the surface the README and the published
+//// HexDocs documentation consider authoritative, and it is the surface
+//// that follows semver — the submodule shapes may be reorganized
+//// between releases.
+////
+//// Reach into a submodule directly only when the facade does not yet
+//// expose what you need; in that case, opening an issue so the
+//// missing entry point can be added at this level is preferred to
+//// scattering submodule imports across user code.
 
 import gleam/option.{type Option}
 import ssevents/decoder
@@ -321,4 +329,8 @@ pub fn decode_stream_with_limits(
   limits limits: Limits,
 ) -> Iterator(Result(Item, SseError)) {
   stream.decode_stream_with_limits(chunks, limits: limits)
+}
+
+pub fn error_to_string(error: SseError) -> String {
+  error.to_string(error)
 }
