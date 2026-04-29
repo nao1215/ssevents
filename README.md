@@ -29,6 +29,16 @@ gleam add ssevents
 
 ## Usage
 
+### Choosing an encode function
+
+- `encode` / `encode_bytes` operate on `Event`.
+- `encode_item` / `encode_item_bytes` operate on `Item`, so they can
+  encode either an event or a comment.
+- `encode_items` / `encode_items_bytes` operate on a whole `List(Item)`.
+- `*_bytes` returns `BitArray` for HTTP response bodies and socket
+  writes; the non-suffixed variants return `String` for logging,
+  debugging, and tests.
+
 ### Encode one event
 
 ```gleam
@@ -112,6 +122,38 @@ pub fn streaming_example() {
   |> ssevents.iterator_to_list
 }
 ```
+
+### Decoding untrusted input
+
+If the peer is untrusted, set explicit decoder limits instead of
+relying on the package defaults. The limit knobs are:
+
+- `max_line_bytes`
+- `max_event_bytes`
+- `max_data_lines`
+- `max_retry_value`
+
+```gleam
+import ssevents
+
+pub fn safe_decode(body: BitArray) {
+  let limits =
+    ssevents.new_limits(
+      max_line_bytes: 4096,
+      max_event_bytes: 65536,
+      max_data_lines: 256,
+      max_retry_value: 60000,
+    )
+
+  ssevents.decode_bytes_with_limits(body, limits: limits)
+}
+```
+
+The built-in defaults are suitable for development and trusted inputs.
+Production clients and servers should choose limits that match their
+own traffic shape and threat model.
+
+See [SECURITY.md](SECURITY.md) for the project security policy.
 
 ### Track reconnect metadata
 
