@@ -1,5 +1,5 @@
 name = "ssevents"
-version = "0.2.0"
+version = "0.3.0"
 description = "Server-Sent Events primitives for Gleam"
 licences = ["MIT"]
 repository = { type = "github", user = "nao1215", repo = "ssevents" }
