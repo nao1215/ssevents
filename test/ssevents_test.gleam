@@ -5,7 +5,9 @@ import gleeunit
 import gleeunit/should
 import ssevents
 import ssevents/encoder
-import ssevents/error.{EventTooLarge, InvalidRetry, InvalidUtf8, LineTooLong}
+import ssevents/error.{
+  EventTooLarge, InvalidRetry, InvalidUtf8, LineTooLong, TooManyDataLines,
+}
 import ssevents/event.{Comment, EventItem}
 import ssevents/stream
 
@@ -184,6 +186,40 @@ pub fn decode_event_too_large_test() {
 
   ssevents.decode_with_limits("data: hello\n\n", limits: limits)
   |> should.equal(Error(EventTooLarge(8)))
+}
+
+pub fn decode_too_many_data_lines_test() {
+  let limits =
+    ssevents.new_limits(
+      max_line_bytes: 100,
+      max_event_bytes: 100,
+      max_data_lines: 2,
+      max_retry_value: 1000,
+    )
+
+  ssevents.decode_bytes_with_limits(
+    <<"data: 1\ndata: 2\ndata: 3\n\n":utf8>>,
+    limits: limits,
+  )
+  |> should.equal(Error(TooManyDataLines(2)))
+}
+
+pub fn decode_max_data_lines_boundary_test() {
+  let limits =
+    ssevents.new_limits(
+      max_line_bytes: 100,
+      max_event_bytes: 100,
+      max_data_lines: 2,
+      max_retry_value: 1000,
+    )
+
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode_bytes_with_limits(
+      <<"data: 1\ndata: 2\n\n":utf8>>,
+      limits: limits,
+    )
+
+  ssevents.data_of(event) |> should.equal("1\n2")
 }
 
 pub fn incremental_push_handles_partial_chunks_test() {
