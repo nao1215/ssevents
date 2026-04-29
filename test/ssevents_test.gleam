@@ -4,6 +4,7 @@ import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
 import ssevents
+import ssevents/encoder
 import ssevents/error.{EventTooLarge, InvalidRetry, LineTooLong}
 import ssevents/event.{Comment, EventItem}
 import ssevents/stream
@@ -59,6 +60,42 @@ pub fn encode_empty_data_event_emits_explicit_data_line_test() {
   ssevents.new("")
   |> ssevents.encode
   |> should.equal("data:\n\n")
+}
+
+pub fn encode_event_with_crlf_test() {
+  ssevents.new("test")
+  |> ssevents.encode_with_line_ending(encoder.Crlf)
+  |> should.equal("data: test\r\n\r\n")
+}
+
+pub fn encode_multiline_event_with_crlf_test() {
+  let event =
+    ssevents.named("job.update", "line1\nline2")
+    |> ssevents.id("cursor-1")
+
+  ssevents.encode_with_line_ending(event, encoder.Crlf)
+  |> should.equal(
+    "event: job.update\r\nid: cursor-1\r\ndata: line1\r\ndata: line2\r\n\r\n",
+  )
+}
+
+pub fn encode_comment_with_crlf_test() {
+  ssevents.comment("hello")
+  |> ssevents.encode_item_with_line_ending(encoder.Crlf)
+  |> should.equal(": hello\r\n")
+}
+
+pub fn encode_items_with_crlf_test() {
+  let items = [
+    ssevents.comment("meta"),
+    ssevents.new("payload") |> ssevents.event_item,
+  ]
+
+  let encoded = ssevents.encode_items_with_line_ending(items, encoder.Crlf)
+  encoded |> should.equal(": meta\r\ndata: payload\r\n\r\n")
+
+  let assert Ok(decoded) = ssevents.decode(encoded)
+  decoded |> should.equal(items)
 }
 
 pub fn decode_simple_event_test() {
