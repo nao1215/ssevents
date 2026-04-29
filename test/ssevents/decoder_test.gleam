@@ -219,6 +219,52 @@ pub fn incremental_push_handles_crlf_with_one_byte_chunks_test() {
   trailing |> should.equal([])
 }
 
+// WHATWG SSE §9.2.5: a leading U+FEFF BOM at the start of the stream
+// must be stripped before parsing. The BOM is the UTF-8 byte sequence
+// EF BB BF.
+
+pub fn decode_bytes_strips_leading_bom_test() {
+  let body = <<0xEF, 0xBB, 0xBF, "data: hello\n\n":utf8>>
+  let assert Ok(items) = ssevents.decode_bytes(body)
+  items |> should.equal([EventItem(ssevents.new("hello"))])
+}
+
+pub fn decode_bytes_only_strips_one_bom_test() {
+  // A second BOM in the *body* (not at the start) is not part of the
+  // §9.2.5 rule and should pass through as data bytes — but `data:`
+  // lines are decoded as UTF-8 strings, so a stray BOM mid-data
+  // becomes a U+FEFF character in the data value.
+  let body = <<0xEF, 0xBB, 0xBF, "data: ":utf8, 0xEF, 0xBB, 0xBF, "x\n\n":utf8>>
+  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  ssevents.data_of(event) |> should.equal("\u{FEFF}x")
+}
+
+pub fn decode_bytes_no_bom_unchanged_test() {
+  // Non-BOM bytes that happen to start with 0xEF (e.g., a UTF-8
+  // multi-byte char like `ï` = C3 AF, not 0xEF) must not trigger
+  // BOM stripping. Use a clean ASCII case to confirm baseline.
+  let body = <<"data: hello\n\n":utf8>>
+  let assert Ok(items) = ssevents.decode_bytes(body)
+  items |> should.equal([EventItem(ssevents.new("hello"))])
+}
+
+pub fn incremental_push_strips_bom_split_across_chunks_test() {
+  // Push the BOM bytes one at a time, then the rest. The decoder
+  // should still strip the full BOM and emit one event.
+  let state = ssevents.new_decoder()
+  let assert Ok(#(state, items1)) = ssevents.push(state, <<0xEF>>)
+  items1 |> should.equal([])
+  let assert Ok(#(state, items2)) = ssevents.push(state, <<0xBB>>)
+  items2 |> should.equal([])
+  let assert Ok(#(state, items3)) = ssevents.push(state, <<0xBF>>)
+  items3 |> should.equal([])
+  let assert Ok(#(state, items4)) =
+    ssevents.push(state, <<"data: hello\n\n":utf8>>)
+  items4 |> should.equal([EventItem(ssevents.new("hello"))])
+  let assert Ok(trailing) = ssevents.finish(state)
+  trailing |> should.equal([])
+}
+
 fn bytes_to_single_byte_chunks(bits: BitArray) -> List(BitArray) {
   bytes_to_single_byte_chunks_loop(bits, [])
 }

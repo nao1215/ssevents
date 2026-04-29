@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Decoder: leading UTF-8 BOM (U+FEFF) is now stripped** before
+  parsing, per WHATWG SSE §9.2.5. Previously a stream that began
+  with the three-byte BOM (`EF BB BF`) — common from UTF-8 emitters
+  like `iconv -t UTF-8` and hand-edited fixtures — failed to parse
+  the first event. The check runs once per `DecodeState` (tracked
+  via a new `bom_handled` flag) and correctly handles the
+  incremental decoder when the BOM is split across `push` calls. (#35)
+
 ## [0.2.0] - 2026-04-29
 
 ### Added

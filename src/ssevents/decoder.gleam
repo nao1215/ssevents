@@ -31,6 +31,12 @@ pub opaque type DecodeState {
     retry: Option(Int),
     event_bytes: Int,
     limits: limit.Limits,
+    /// True once the leading-BOM check has run for this stream.
+    /// WHATWG SSE §9.2.5 requires a single U+FEFF at the start of
+    /// the stream to be discarded; once we've either stripped it
+    /// or established the stream doesn't start with one, this
+    /// flag is set so the check doesn't repeat on later pushes.
+    bom_handled: Bool,
   )
 }
 
@@ -77,6 +83,7 @@ pub fn new_decoder_with_limits(limits: limit.Limits) -> DecodeState {
     retry: None,
     event_bytes: 0,
     limits: limits,
+    bom_handled: False,
   )
 }
 
@@ -85,8 +92,30 @@ pub fn push(
   chunk: BitArray,
 ) -> Result(#(DecodeState, List(event.Item)), SseError) {
   let combined = bit_array.append(to: state.buffer, suffix: chunk)
-  let state = DecodeState(..state, buffer: combined)
+  let state = DecodeState(..state, buffer: combined) |> maybe_strip_bom
   process_lines(state, [])
+}
+
+/// WHATWG SSE §9.2.5: discard a leading U+FEFF BYTE ORDER MARK at the
+/// very start of the stream.
+///
+/// `state.bom_handled` is set once we've either stripped the BOM or
+/// established the stream doesn't start with one. While the buffer
+/// holds only a 1- or 2-byte prefix of the BOM (`EF` or `EF BB`), we
+/// hold off on deciding so the check stays correct even when the BOM
+/// is split across two `push` calls.
+fn maybe_strip_bom(state: DecodeState) -> DecodeState {
+  case state.bom_handled, state.buffer {
+    True, _ -> state
+    False, <<0xEF, 0xBB, 0xBF, rest:bytes>> ->
+      DecodeState(..state, buffer: rest, bom_handled: True)
+    // Buffer holds a 1- or 2-byte prefix of the BOM; wait for more.
+    False, <<0xEF, 0xBB>> -> state
+    False, <<0xEF>> -> state
+    False, <<>> -> state
+    // Anything else: not a BOM-prefixed stream, never check again.
+    False, _ -> DecodeState(..state, bom_handled: True)
+  }
 }
 
 pub fn finish(state: DecodeState) -> Result(List(event.Item), SseError) {
