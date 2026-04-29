@@ -29,6 +29,16 @@ gleam add ssevents
 
 ## Usage
 
+### Choosing an encode function
+
+- `encode` / `encode_bytes` operate on `Event`.
+- `encode_item` / `encode_item_bytes` operate on `Item`, so they can
+  encode either an event or a comment.
+- `encode_items` / `encode_items_bytes` operate on a whole `List(Item)`.
+- `*_bytes` returns `BitArray` for HTTP response bodies and socket
+  writes; the non-suffixed variants return `String` for logging,
+  debugging, and tests.
+
 ### Encode one event
 
 ```gleam

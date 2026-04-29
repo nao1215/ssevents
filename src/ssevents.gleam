@@ -126,26 +126,37 @@ pub fn default_line_ending() -> LineEnding {
   encoder.default_line_ending()
 }
 
+/// Encode one semantic SSE `Event` to its wire-format `String`.
+///
+/// Use this when you want a text representation for logging,
+/// inspection, fixtures, or a caller that still expects `String`.
 pub fn encode(event: Event) -> String {
   encoder.encode(event)
 }
 
+/// Encode one semantic SSE `Event` to its wire-format `BitArray`.
+///
+/// Use this for HTTP responses and other byte-oriented transports.
 pub fn encode_bytes(event: Event) -> BitArray {
   encoder.encode_bytes(event)
 }
 
+/// Encode one `Item` (either an event or a comment) to `String`.
 pub fn encode_item(item: Item) -> String {
   encoder.encode_item(item)
 }
 
+/// Encode one `Item` (either an event or a comment) to `BitArray`.
 pub fn encode_item_bytes(item: Item) -> BitArray {
   encoder.encode_item_bytes(item)
 }
 
+/// Encode a whole sequence of SSE items to one `String`.
 pub fn encode_items(items: List(Item)) -> String {
   encoder.encode_items(items)
 }
 
+/// Encode a whole sequence of SSE items to one `BitArray`.
 pub fn encode_items_bytes(items: List(Item)) -> BitArray {
   encoder.encode_items_bytes(items)
 }
