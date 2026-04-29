@@ -1,0 +1,152 @@
+//// Deterministic Server-Sent Events encoding.
+////
+//// The default line ending is LF. Call the `*_with_line_ending`
+//// variants to emit CRLF instead.
+
+import gleam/bit_array
+import gleam/int
+import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/string
+import ssevents/event
+
+pub type LineEnding {
+  Lf
+  Crlf
+}
+
+pub fn default_line_ending() -> LineEnding {
+  Lf
+}
+
+pub fn encode(event: event.Event) -> String {
+  encode_with_line_ending(event, Lf)
+}
+
+pub fn encode_bytes(event: event.Event) -> BitArray {
+  encode(event) |> bit_array.from_string
+}
+
+pub fn encode_item(item: event.Item) -> String {
+  encode_item_with_line_ending(item, Lf)
+}
+
+pub fn encode_item_bytes(item: event.Item) -> BitArray {
+  encode_item(item) |> bit_array.from_string
+}
+
+pub fn encode_items(items: List(event.Item)) -> String {
+  encode_items_with_line_ending(items, Lf)
+}
+
+pub fn encode_items_bytes(items: List(event.Item)) -> BitArray {
+  encode_items(items) |> bit_array.from_string
+}
+
+pub fn encode_with_line_ending(
+  event: event.Event,
+  line_ending: LineEnding,
+) -> String {
+  let newline = line_ending_to_string(line_ending)
+  let lines = event_lines(event)
+  string.concat(list.map(lines, fn(line) { line <> newline })) <> newline
+}
+
+pub fn encode_item_with_line_ending(
+  item: event.Item,
+  line_ending: LineEnding,
+) -> String {
+  case item {
+    event.EventItem(ev) -> encode_with_line_ending(ev, line_ending)
+    event.Comment(text) -> encode_comment_with_line_ending(text, line_ending)
+  }
+}
+
+pub fn encode_items_with_line_ending(
+  items: List(event.Item),
+  line_ending: LineEnding,
+) -> String {
+  items
+  |> list.map(fn(item) { encode_item_with_line_ending(item, line_ending) })
+  |> string.concat
+}
+
+fn event_lines(ev: event.Event) -> List(String) {
+  let prefix_lines =
+    []
+    |> prepend_optional("event", event.name_of(ev))
+    |> prepend_optional("id", event.id_of(ev))
+    |> prepend_optional_int("retry", event.retry_of(ev))
+    |> list.reverse
+
+  let data_lines =
+    event.data_of(ev)
+    |> normalise_newlines
+    |> string.split(on: "\n")
+    |> list.map(fn(line) { prefixed_line("data", line) })
+
+  list.append(prefix_lines, data_lines)
+}
+
+fn prepend_optional(
+  lines: List(String),
+  field: String,
+  maybe_value: Option(String),
+) -> List(String) {
+  case maybe_value {
+    Some(value) -> [prefixed_line(field, value), ..lines]
+    None -> lines
+  }
+}
+
+fn prepend_optional_int(
+  lines: List(String),
+  field: String,
+  maybe_value: Option(Int),
+) -> List(String) {
+  case maybe_value {
+    Some(value) -> [prefixed_line(field, int.to_string(value)), ..lines]
+    None -> lines
+  }
+}
+
+fn encode_comment_with_line_ending(
+  text: String,
+  line_ending: LineEnding,
+) -> String {
+  let newline = line_ending_to_string(line_ending)
+
+  text
+  |> normalise_newlines
+  |> string.split(on: "\n")
+  |> list.map(comment_line)
+  |> list.map(fn(line) { line <> newline })
+  |> string.concat
+}
+
+fn comment_line(text: String) -> String {
+  case text {
+    "" -> ":"
+    _ -> ": " <> text
+  }
+}
+
+fn prefixed_line(field: String, value: String) -> String {
+  case value {
+    "" -> field <> ":"
+    _ -> field <> ": " <> value
+  }
+}
+
+fn line_ending_to_string(line_ending: LineEnding) -> String {
+  case line_ending {
+    Lf -> "\n"
+    Crlf -> "\r\n"
+  }
+}
+
+fn normalise_newlines(text: String) -> String {
+  text
+  |> string.replace(each: "\r\n", with: "\n")
+  |> string.replace(each: "\r", with: "\n")
+}

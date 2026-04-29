@@ -1,0 +1,450 @@
+//// Full-body and incremental SSE decoding.
+////
+//// Semantics chosen for the initial release:
+//// - accepted line endings: LF and CRLF
+//// - unknown fields are ignored
+//// - EOF dispatches the final unterminated event or trailing comment
+//// - the first decode error fails the whole operation
+//// - retry values must be ASCII digits and must not exceed
+////   `Limits.max_retry_value`
+
+import gleam/bit_array
+import gleam/int
+import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/string
+import ssevents/error.{
+  type SseError, EventTooLarge, InvalidRetry, InvalidUtf8, LineTooLong,
+  TooManyDataLines, UnexpectedEnd,
+}
+import ssevents/event
+import ssevents/limit
+import ssevents/validate
+
+pub opaque type DecodeState {
+  DecodeState(
+    buffer: BitArray,
+    event_name: Option(String),
+    data_lines_rev: List(String),
+    data_line_count: Int,
+    id: Option(String),
+    retry: Option(Int),
+    event_bytes: Int,
+    limits: limit.Limits,
+  )
+}
+
+pub fn decode(input: String) -> Result(List(event.Item), SseError) {
+  decode_with_limits(input, limits: limit.default())
+}
+
+pub fn decode_bytes(input: BitArray) -> Result(List(event.Item), SseError) {
+  decode_bytes_with_limits(input, limits: limit.default())
+}
+
+pub fn decode_with_limits(
+  input: String,
+  limits limits: limit.Limits,
+) -> Result(List(event.Item), SseError) {
+  decode_bytes_with_limits(bit_array.from_string(input), limits: limits)
+}
+
+pub fn decode_bytes_with_limits(
+  input: BitArray,
+  limits limits: limit.Limits,
+) -> Result(List(event.Item), SseError) {
+  case push(new_decoder_with_limits(limits), input) {
+    Error(error) -> Error(error)
+    Ok(#(state, items)) ->
+      case finish(state) {
+        Error(error) -> Error(error)
+        Ok(trailing) -> Ok(list.append(items, trailing))
+      }
+  }
+}
+
+pub fn new_decoder() -> DecodeState {
+  new_decoder_with_limits(limit.default())
+}
+
+pub fn new_decoder_with_limits(limits: limit.Limits) -> DecodeState {
+  DecodeState(
+    buffer: <<>>,
+    event_name: None,
+    data_lines_rev: [],
+    data_line_count: 0,
+    id: None,
+    retry: None,
+    event_bytes: 0,
+    limits: limits,
+  )
+}
+
+pub fn push(
+  state: DecodeState,
+  chunk: BitArray,
+) -> Result(#(DecodeState, List(event.Item)), SseError) {
+  let combined = bit_array.append(to: state.buffer, suffix: chunk)
+  let state = DecodeState(..state, buffer: combined)
+  process_lines(state, [])
+}
+
+pub fn finish(state: DecodeState) -> Result(List(event.Item), SseError) {
+  case state.buffer {
+    <<>> -> finish_event(state)
+    _ ->
+      case ends_with_cr(state.buffer) {
+        True -> Error(UnexpectedEnd)
+        False ->
+          case decode_line(state.buffer) {
+            Error(error) -> Error(error)
+            Ok(line) ->
+              case
+                process_line(
+                  DecodeState(..state, buffer: <<>>),
+                  line,
+                  bit_array.byte_size(state.buffer),
+                )
+              {
+                Error(error) -> Error(error)
+                Ok(#(state_after_line, emitted)) ->
+                  case finish_event(state_after_line) {
+                    Error(error) -> Error(error)
+                    Ok(trailing) -> Ok(list.append(emitted, trailing))
+                  }
+              }
+          }
+      }
+  }
+}
+
+fn process_lines(
+  state: DecodeState,
+  emitted_rev: List(event.Item),
+) -> Result(#(DecodeState, List(event.Item)), SseError) {
+  case next_complete_line(state.buffer) {
+    Ok(Some(#(line_bytes, rest, line_byte_size))) ->
+      case line_byte_size > limit.max_line_bytes(state.limits) {
+        True -> Error(LineTooLong(limit.max_line_bytes(state.limits)))
+        False ->
+          case decode_line(line_bytes) {
+            Error(error) -> Error(error)
+            Ok(line) ->
+              case
+                process_line(
+                  DecodeState(..state, buffer: rest),
+                  line,
+                  line_byte_size,
+                )
+              {
+                Error(error) -> Error(error)
+                Ok(#(next_state, emitted)) ->
+                  process_lines(
+                    next_state,
+                    list.reverse(emitted) |> list.append(emitted_rev),
+                  )
+              }
+          }
+      }
+
+    Ok(None) ->
+      case
+        bit_array.byte_size(state.buffer) > limit.max_line_bytes(state.limits)
+      {
+        True -> Error(LineTooLong(limit.max_line_bytes(state.limits)))
+        False -> Ok(#(state, list.reverse(emitted_rev)))
+      }
+
+    Error(error) -> Error(error)
+  }
+}
+
+fn process_line(
+  state: DecodeState,
+  line: String,
+  line_byte_size: Int,
+) -> Result(#(DecodeState, List(event.Item)), SseError) {
+  case line {
+    "" ->
+      case dispatch_event(state) {
+        Error(error) -> Error(error)
+        Ok(#(next_state, maybe_item)) ->
+          case maybe_item {
+            Some(item) -> Ok(#(next_state, [item]))
+            None -> Ok(#(next_state, []))
+          }
+      }
+
+    _ ->
+      case string.starts_with(line, ":") {
+        True ->
+          Ok(
+            #(state, [
+              event.Comment(
+                decode_comment_text(string.drop_start(from: line, up_to: 1)),
+              ),
+            ]),
+          )
+
+        False -> apply_field(state, line, line_byte_size)
+      }
+  }
+}
+
+fn apply_field(
+  state: DecodeState,
+  line: String,
+  line_byte_size: Int,
+) -> Result(#(DecodeState, List(event.Item)), SseError) {
+  let #(field, value) = split_field(line)
+  let next_event_bytes = state.event_bytes + line_byte_size
+
+  case next_event_bytes > limit.max_event_bytes(state.limits) {
+    True -> Error(EventTooLarge(limit.max_event_bytes(state.limits)))
+    False ->
+      case field {
+        "data" ->
+          case state.data_line_count + 1 > limit.max_data_lines(state.limits) {
+            True -> Error(TooManyDataLines(limit.max_data_lines(state.limits)))
+            False ->
+              Ok(
+                #(
+                  DecodeState(
+                    ..state,
+                    data_lines_rev: [value, ..state.data_lines_rev],
+                    data_line_count: state.data_line_count + 1,
+                    event_bytes: next_event_bytes,
+                  ),
+                  [],
+                ),
+              )
+          }
+
+        "event" ->
+          case validate.validate_event_name(value) {
+            Error(error) -> Error(error)
+            Ok(valid_name) ->
+              Ok(
+                #(
+                  DecodeState(
+                    ..state,
+                    event_name: Some(valid_name),
+                    event_bytes: next_event_bytes,
+                  ),
+                  [],
+                ),
+              )
+          }
+
+        "id" ->
+          case validate.validate_id(value) {
+            Error(error) -> Error(error)
+            Ok(valid_id) ->
+              Ok(
+                #(
+                  DecodeState(
+                    ..state,
+                    id: Some(valid_id),
+                    event_bytes: next_event_bytes,
+                  ),
+                  [],
+                ),
+              )
+          }
+
+        "retry" ->
+          case parse_retry(value, state.limits) {
+            Error(error) -> Error(error)
+            Ok(retry_value) ->
+              Ok(
+                #(
+                  DecodeState(
+                    ..state,
+                    retry: Some(retry_value),
+                    event_bytes: next_event_bytes,
+                  ),
+                  [],
+                ),
+              )
+          }
+
+        _ -> Ok(#(DecodeState(..state, event_bytes: next_event_bytes), []))
+      }
+  }
+}
+
+fn dispatch_event(
+  state: DecodeState,
+) -> Result(#(DecodeState, Option(event.Item)), SseError) {
+  let emitted = case has_meaningful_event_content(state) {
+    True ->
+      Some(
+        event.from_parts(
+          event_name: state.event_name,
+          data: state.data_lines_rev |> list.reverse |> string.join(with: "\n"),
+          id: state.id,
+          retry: state.retry,
+        )
+        |> event.event_item,
+      )
+    False -> None
+  }
+
+  Ok(#(reset_event_state(state), emitted))
+}
+
+fn finish_event(state: DecodeState) -> Result(List(event.Item), SseError) {
+  case dispatch_event(state) {
+    Error(error) -> Error(error)
+    Ok(#(_, maybe_item)) ->
+      case maybe_item {
+        Some(item) -> Ok([item])
+        None -> Ok([])
+      }
+  }
+}
+
+fn reset_event_state(state: DecodeState) -> DecodeState {
+  DecodeState(
+    ..state,
+    event_name: None,
+    data_lines_rev: [],
+    data_line_count: 0,
+    id: None,
+    retry: None,
+    event_bytes: 0,
+  )
+}
+
+fn has_meaningful_event_content(state: DecodeState) -> Bool {
+  case state.data_line_count > 0 {
+    True -> True
+    False ->
+      case state.event_name, state.id, state.retry {
+        Some(_), _, _ -> True
+        _, Some(_), _ -> True
+        _, _, Some(_) -> True
+        None, None, None -> False
+      }
+  }
+}
+
+fn split_field(line: String) -> #(String, String) {
+  split_field_bytes(bit_array.from_string(line), <<>>, line)
+}
+
+fn split_field_bytes(
+  remaining: BitArray,
+  field_rev: BitArray,
+  fallback: String,
+) -> #(String, String) {
+  case remaining {
+    <<>> -> #(fallback, "")
+    <<58, rest:bytes>> -> #(
+      reverse_bytes(field_rev, <<>>) |> unsafe_text,
+      rest |> unsafe_text |> trim_optional_leading_space,
+    )
+    <<byte, rest:bytes>> ->
+      split_field_bytes(rest, <<byte, field_rev:bits>>, fallback)
+    _ -> #(fallback, "")
+  }
+}
+
+fn trim_optional_leading_space(value: String) -> String {
+  case string.starts_with(value, " ") {
+    True -> string.drop_start(from: value, up_to: 1)
+    False -> value
+  }
+}
+
+fn decode_comment_text(value: String) -> String {
+  trim_optional_leading_space(value)
+}
+
+fn parse_retry(value: String, limits: limit.Limits) -> Result(Int, SseError) {
+  case is_ascii_digit_string(value) {
+    False -> Error(InvalidRetry(value))
+    True ->
+      case int.parse(value) {
+        Error(_) -> Error(InvalidRetry(value))
+        Ok(parsed) ->
+          case parsed > limit.max_retry_value(limits) {
+            True -> Error(InvalidRetry(value))
+            False -> Ok(parsed)
+          }
+      }
+  }
+}
+
+fn is_ascii_digit_string(value: String) -> Bool {
+  case value {
+    "" -> False
+    _ -> ascii_digits_only(bit_array.from_string(value))
+  }
+}
+
+fn ascii_digits_only(bits: BitArray) -> Bool {
+  case bits {
+    <<>> -> True
+    <<digit, rest:bytes>> if digit >= 48 && digit <= 57 ->
+      ascii_digits_only(rest)
+    _ -> False
+  }
+}
+
+fn decode_line(line: BitArray) -> Result(String, SseError) {
+  case bit_array.to_string(line) {
+    Ok(text) -> Ok(text)
+    Error(_) -> Error(InvalidUtf8)
+  }
+}
+
+fn unsafe_text(bits: BitArray) -> String {
+  case bit_array.to_string(bits) {
+    Ok(text) -> text
+    Error(_) -> ""
+  }
+}
+
+fn next_complete_line(
+  buffer: BitArray,
+) -> Result(Option(#(BitArray, BitArray, Int)), SseError) {
+  find_newline(buffer, <<>>, 0)
+}
+
+fn find_newline(
+  remaining: BitArray,
+  acc_rev: BitArray,
+  line_bytes: Int,
+) -> Result(Option(#(BitArray, BitArray, Int)), SseError) {
+  case remaining {
+    <<>> -> Ok(None)
+
+    <<10, rest:bytes>> ->
+      case acc_rev {
+        <<13, acc_rest:bits>> ->
+          Ok(Some(#(reverse_bytes(acc_rest, <<>>), rest, line_bytes - 1)))
+        _ -> Ok(Some(#(reverse_bytes(acc_rev, <<>>), rest, line_bytes)))
+      }
+
+    <<byte, rest:bytes>> ->
+      find_newline(rest, <<byte, acc_rev:bits>>, line_bytes + 1)
+
+    _ -> Error(InvalidUtf8)
+  }
+}
+
+fn reverse_bytes(input: BitArray, acc: BitArray) -> BitArray {
+  case input {
+    <<>> -> acc
+    <<byte, rest:bytes>> -> reverse_bytes(rest, <<byte, acc:bits>>)
+    _ -> acc
+  }
+}
+
+fn ends_with_cr(bits: BitArray) -> Bool {
+  case reverse_bytes(bits, <<>>) {
+    <<13, _rest:bytes>> -> True
+    _ -> False
+  }
+}

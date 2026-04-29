@@ -1,0 +1,40 @@
+name = "ssevents"
+version = "0.1.0"
+description = "Server-Sent Events primitives for Gleam"
+licences = ["MIT"]
+repository = { type = "github", user = "nao1215", repo = "ssevents" }
+links = [
+  { title = "Repository", href = "https://github.com/nao1215/ssevents" },
+  { title = "Changelog", href = "https://github.com/nao1215/ssevents/blob/main/CHANGELOG.md" },
+]
+gleam = ">= 1.15.0"
+
+[dependencies]
+gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"
+glinter = ">= 2.14.0 and < 3.0.0"
+
+[tools.glinter]
+warnings_as_errors = true
+include = ["src/", "test/"]
+
+[tools.glinter.rules]
+label_possible = "off"
+unused_exports = "off"
+
+[tools.glinter.ignore]
+"src/ssevents/decoder.gleam" = [
+  "deep_nesting",
+  "prefer_guard_clause",
+  "thrown_away_error",
+]
+"src/ssevents/limit.gleam" = ["avoid_panic"]
+"src/ssevents/stream.gleam" = ["deep_nesting"]
+"src/ssevents/validate.gleam" = ["avoid_panic", "prefer_guard_clause"]
+"test/**/*.gleam" = [
+  "assert_ok_pattern",
+  "missing_type_annotation",
+  "unused_exports",
+]
