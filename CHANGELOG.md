@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Construction: `event` and `id` values are now sanitised on the way
+  in** — CR (U+000D), LF (U+000A), and NUL (U+0000) are silently
+  stripped from the value passed to `from_parts`, `event/2`, and
+  `id/2`. The encoder previously emitted those bytes verbatim,
+  producing wire that the decoder either silently corrupted (LF
+  splits the field across two lines, the post-LF tail is parsed as
+  an unrelated unknown field) or rejected (NUL in id triggered the
+  field-validation path before this release introduced silent-ignore).
+  After this fix `decode(encode(x))` round-trips for any caller-built
+  `Event`, matching the posture `multipartkit/form` already takes for
+  header values. (#39)
 - **Decoder: lone CR (U+000D) is now accepted as a line separator** per
   WHATWG SSE §9.2.5, alongside CRLF and lone LF. A stream like
   `data: a\rdata: b\r\r` now decodes the same as the LF-terminated
