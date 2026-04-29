@@ -29,7 +29,7 @@ pub fn event_builder_accessors_test() {
     |> ssevents.id("job-1")
     |> ssevents.retry(5000)
 
-  ssevents.event_name(event) |> should.equal(Some("job.update"))
+  ssevents.name_of(event) |> should.equal(Some("job.update"))
   ssevents.data_of(event) |> should.equal("payload")
   ssevents.id_of(event) |> should.equal(Some("job-1"))
   ssevents.retry_of(event) |> should.equal(Some(5000))
@@ -136,7 +136,7 @@ pub fn decode_simple_event_test() {
   let assert Ok([EventItem(event)]) =
     ssevents.decode("event: ping\ndata: hello\nid: 1\nretry: 1000\n\n")
 
-  ssevents.event_name(event) |> should.equal(Some("ping"))
+  ssevents.name_of(event) |> should.equal(Some("ping"))
   ssevents.data_of(event) |> should.equal("hello")
   ssevents.id_of(event) |> should.equal(Some("1"))
   ssevents.retry_of(event) |> should.equal(Some(1000))
@@ -176,14 +176,14 @@ pub fn decode_unknown_fields_are_ignored_test() {
     ssevents.decode("foo: bar\ndata: ok\nanother\n\n")
 
   ssevents.data_of(event) |> should.equal("ok")
-  ssevents.event_name(event) |> should.equal(None)
+  ssevents.name_of(event) |> should.equal(None)
 }
 
 pub fn decode_crlf_test() {
   let assert Ok([EventItem(event)]) =
     ssevents.decode("event: ping\r\ndata: hello\r\n\r\n")
 
-  ssevents.event_name(event) |> should.equal(Some("ping"))
+  ssevents.name_of(event) |> should.equal(Some("ping"))
   ssevents.data_of(event) |> should.equal("hello")
 }
 

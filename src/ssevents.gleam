@@ -86,7 +86,7 @@ pub fn named(name: String, data: String) -> Event {
   event.named(name, data)
 }
 
-pub fn event_name(event: Event) -> Option(String) {
+pub fn name_of(event: Event) -> Option(String) {
   event.name_of(event)
 }
 
