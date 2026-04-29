@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ("must be a non-negative integer") so the message is actionable
   without consulting the SSE spec.
 
+- `reconnect.update` now uses `option.or` for the
+  "prefer-new-fall-back-to-old" merge of `last_event_id` / `retry`,
+  replacing the explicit `case` ladders with a single idiomatic
+  expression.
+
 ### Performance
 
 - `decoder.ends_with_cr` is now O(1): it slices the last byte of the
