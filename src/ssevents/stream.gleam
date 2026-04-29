@@ -98,86 +98,93 @@ fn pull_decoded(
   pending_rev pending_rev: List(Result(event.Item, SseError)),
   finished finished: Bool,
 ) -> Iterator(Result(event.Item, SseError)) {
-  Iterator(fn() {
-    case pending_rev {
-      [item, ..rest] ->
-        Next(
-          item: item,
-          rest: pull_decoded(
-            decoder: decoder_state,
-            chunks: chunks,
-            pending_rev: rest,
-            finished: finished,
-          ),
-        )
+  Iterator(fn() { step_decoded(decoder_state, chunks, pending_rev, finished) })
+}
 
-      [] ->
-        case finished {
-          True -> Done
-          False ->
-            case next(chunks) {
-              Next(chunk, rest_chunks) ->
-                case decoder.push(decoder_state, chunk) {
-                  Error(error) ->
-                    Next(
-                      item: Error(error),
-                      rest: pull_decoded(
-                        decoder: decoder_state,
-                        chunks: empty(),
-                        pending_rev: [],
-                        finished: True,
-                      ),
-                    )
+fn step_decoded(
+  decoder_state: decoder.DecodeState,
+  chunks: Iterator(BitArray),
+  pending_rev: List(Result(event.Item, SseError)),
+  finished: Bool,
+) -> Step(Result(event.Item, SseError)) {
+  case pending_rev {
+    [item, ..rest] ->
+      Next(
+        item: item,
+        rest: pull_decoded(
+          decoder: decoder_state,
+          chunks: chunks,
+          pending_rev: rest,
+          finished: finished,
+        ),
+      )
+    [] ->
+      case finished {
+        True -> Done
+        False -> advance_decoder(decoder_state, chunks)
+      }
+  }
+}
 
-                  Ok(#(next_decoder, emitted)) ->
-                    case emitted {
-                      [] ->
-                        next(pull_decoded(
-                          decoder: next_decoder,
-                          chunks: rest_chunks,
-                          pending_rev: [],
-                          finished: False,
-                        ))
+fn advance_decoder(
+  decoder_state: decoder.DecodeState,
+  chunks: Iterator(BitArray),
+) -> Step(Result(event.Item, SseError)) {
+  case next(chunks) {
+    Next(chunk, rest_chunks) ->
+      handle_push(
+        decoder.push(decoder_state, chunk),
+        decoder_state,
+        rest_chunks,
+      )
+    Done -> handle_finish(decoder.finish(decoder_state), decoder_state)
+  }
+}
 
-                      _ -> {
-                        let pending = emitted |> list.map(Ok) |> list.reverse
-                        next(pull_decoded(
-                          decoder: next_decoder,
-                          chunks: rest_chunks,
-                          pending_rev: pending,
-                          finished: False,
-                        ))
-                      }
-                    }
-                }
+fn handle_push(
+  result: Result(#(decoder.DecodeState, List(event.Item)), SseError),
+  prev_decoder: decoder.DecodeState,
+  rest_chunks: Iterator(BitArray),
+) -> Step(Result(event.Item, SseError)) {
+  case result {
+    Error(error) -> terminal_error(error, prev_decoder)
+    Ok(#(next_decoder, emitted)) ->
+      step_decoded(
+        next_decoder,
+        rest_chunks,
+        emitted |> list.map(Ok) |> list.reverse,
+        False,
+      )
+  }
+}
 
-              Done ->
-                case decoder.finish(decoder_state) {
-                  Error(error) ->
-                    Next(
-                      item: Error(error),
-                      rest: pull_decoded(
-                        decoder: decoder_state,
-                        chunks: empty(),
-                        pending_rev: [],
-                        finished: True,
-                      ),
-                    )
+fn handle_finish(
+  result: Result(List(event.Item), SseError),
+  decoder_state: decoder.DecodeState,
+) -> Step(Result(event.Item, SseError)) {
+  case result {
+    Error(error) -> terminal_error(error, decoder_state)
+    Ok(emitted) ->
+      step_decoded(
+        decoder_state,
+        empty(),
+        emitted |> list.map(Ok) |> list.reverse,
+        True,
+      )
+  }
+}
 
-                  Ok(emitted) ->
-                    case emitted {
-                      [] -> Done
-                      _ ->
-                        next(pull_decoded(
-                          decoder: decoder_state,
-                          chunks: empty(),
-                          pending_rev: emitted |> list.map(Ok) |> list.reverse,
-                          finished: True,
-                        ))
-                    }
-                }
-            }
-        }
-    }
-  })
+fn terminal_error(
+  error: SseError,
+  decoder_state: decoder.DecodeState,
+) -> Step(Result(event.Item, SseError)) {
+  Next(
+    item: Error(error),
+    rest: pull_decoded(
+      decoder: decoder_state,
+      chunks: empty(),
+      pending_rev: [],
+      finished: True,
+    ),
+  )
 }
