@@ -253,7 +253,14 @@ fn apply_field_parts(
             fn(s, v) { DecodeState(..s, event_name: Some(v)) },
           )
         "id" ->
-          apply_validated_field(
+          // WHATWG SSE §9.2.6: "If the field name is `id`: If the
+          // field value does not contain U+0000 NULL, then set the
+          // last event ID buffer to the field value. Otherwise,
+          // ignore the field." We surface invalid bytes (NUL, CR,
+          // LF) as a silent field-drop rather than a hard error so
+          // an event with an unrelated valid `data:` line still
+          // dispatches.
+          apply_validated_field_or_ignore(
             state,
             validate.validate_id(value),
             next_event_bytes,
@@ -301,6 +308,24 @@ fn apply_validated_field(
 ) -> Result(#(DecodeState, List(event.Item)), SseError) {
   case validated {
     Error(error) -> Error(error)
+    Ok(value) ->
+      Ok(#(set(DecodeState(..state, event_bytes: next_event_bytes), value), []))
+  }
+}
+
+/// Like `apply_validated_field` but treats validation failure as a
+/// silent drop of the offending field (the line is still counted
+/// against `event_bytes`, the buffered event continues to be
+/// assembled). Used by fields whose WHATWG SSE §9.2.6 contract is
+/// "ignore the field" on invalid input.
+fn apply_validated_field_or_ignore(
+  state: DecodeState,
+  validated: Result(a, SseError),
+  next_event_bytes: Int,
+  set: fn(DecodeState, a) -> DecodeState,
+) -> Result(#(DecodeState, List(event.Item)), SseError) {
+  case validated {
+    Error(_) -> Ok(#(DecodeState(..state, event_bytes: next_event_bytes), []))
     Ok(value) ->
       Ok(#(set(DecodeState(..state, event_bytes: next_event_bytes), value), []))
   }
