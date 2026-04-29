@@ -123,6 +123,38 @@ pub fn streaming_example() {
 }
 ```
 
+### Decoding untrusted input
+
+If the peer is untrusted, set explicit decoder limits instead of
+relying on the package defaults. The limit knobs are:
+
+- `max_line_bytes`
+- `max_event_bytes`
+- `max_data_lines`
+- `max_retry_value`
+
+```gleam
+import ssevents
+
+pub fn safe_decode(body: BitArray) {
+  let limits =
+    ssevents.new_limits(
+      max_line_bytes: 4096,
+      max_event_bytes: 65536,
+      max_data_lines: 256,
+      max_retry_value: 60000,
+    )
+
+  ssevents.decode_bytes_with_limits(body, limits: limits)
+}
+```
+
+The built-in defaults are suitable for development and trusted inputs.
+Production clients and servers should choose limits that match their
+own traffic shape and threat model.
+
+See [SECURITY.md](SECURITY.md) for the project security policy.
+
 ### Track reconnect metadata
 
 ```gleam
