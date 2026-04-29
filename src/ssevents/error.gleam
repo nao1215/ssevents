@@ -22,7 +22,10 @@ pub fn to_string(error: SseError) -> String {
       "event exceeds configured byte limit " <> int.to_string(limit)
     TooManyDataLines(limit) ->
       "event exceeds configured data-line limit " <> int.to_string(limit)
-    InvalidRetry(value) -> "invalid retry field: " <> value
+    InvalidRetry(value) ->
+      "invalid retry value: \""
+      <> value
+      <> "\" (must be a non-negative integer)"
     InvalidField(field) -> "invalid SSE field: " <> field
     UnexpectedEnd -> "unexpected end of input"
     UnsupportedFeature(feature) -> "unsupported feature: " <> feature
