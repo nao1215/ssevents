@@ -215,73 +215,65 @@ fn apply_field_parts(
     True -> Error(EventTooLarge(limit.max_event_bytes(state.limits)))
     False ->
       case field {
-        "data" ->
-          case state.data_line_count + 1 > limit.max_data_lines(state.limits) {
-            True -> Error(TooManyDataLines(limit.max_data_lines(state.limits)))
-            False ->
-              Ok(
-                #(
-                  DecodeState(
-                    ..state,
-                    data_lines_rev: [value, ..state.data_lines_rev],
-                    data_line_count: state.data_line_count + 1,
-                    event_bytes: next_event_bytes,
-                  ),
-                  [],
-                ),
-              )
-          }
-
+        "data" -> apply_data_field(state, value, next_event_bytes)
         "event" ->
-          case validate.validate_event_name(value) {
-            Error(error) -> Error(error)
-            Ok(valid_name) ->
-              Ok(
-                #(
-                  DecodeState(
-                    ..state,
-                    event_name: Some(valid_name),
-                    event_bytes: next_event_bytes,
-                  ),
-                  [],
-                ),
-              )
-          }
-
+          apply_validated_field(
+            state,
+            validate.validate_event_name(value),
+            next_event_bytes,
+            fn(s, v) { DecodeState(..s, event_name: Some(v)) },
+          )
         "id" ->
-          case validate.validate_id(value) {
-            Error(error) -> Error(error)
-            Ok(valid_id) ->
-              Ok(
-                #(
-                  DecodeState(
-                    ..state,
-                    id: Some(valid_id),
-                    event_bytes: next_event_bytes,
-                  ),
-                  [],
-                ),
-              )
-          }
-
+          apply_validated_field(
+            state,
+            validate.validate_id(value),
+            next_event_bytes,
+            fn(s, v) { DecodeState(..s, id: Some(v)) },
+          )
         "retry" ->
-          case parse_retry(value, state.limits) {
-            Error(error) -> Error(error)
-            Ok(retry_value) ->
-              Ok(
-                #(
-                  DecodeState(
-                    ..state,
-                    retry: Some(retry_value),
-                    event_bytes: next_event_bytes,
-                  ),
-                  [],
-                ),
-              )
-          }
-
+          apply_validated_field(
+            state,
+            parse_retry(value, state.limits),
+            next_event_bytes,
+            fn(s, v) { DecodeState(..s, retry: Some(v)) },
+          )
         _ -> Ok(#(DecodeState(..state, event_bytes: next_event_bytes), []))
       }
+  }
+}
+
+fn apply_data_field(
+  state: DecodeState,
+  value: String,
+  next_event_bytes: Int,
+) -> Result(#(DecodeState, List(event.Item)), SseError) {
+  case state.data_line_count + 1 > limit.max_data_lines(state.limits) {
+    True -> Error(TooManyDataLines(limit.max_data_lines(state.limits)))
+    False ->
+      Ok(
+        #(
+          DecodeState(
+            ..state,
+            data_lines_rev: [value, ..state.data_lines_rev],
+            data_line_count: state.data_line_count + 1,
+            event_bytes: next_event_bytes,
+          ),
+          [],
+        ),
+      )
+  }
+}
+
+fn apply_validated_field(
+  state: DecodeState,
+  validated: Result(a, SseError),
+  next_event_bytes: Int,
+  set: fn(DecodeState, a) -> DecodeState,
+) -> Result(#(DecodeState, List(event.Item)), SseError) {
+  case validated {
+    Error(error) -> Error(error)
+    Ok(value) ->
+      Ok(#(set(DecodeState(..state, event_bytes: next_event_bytes), value), []))
   }
 }
 

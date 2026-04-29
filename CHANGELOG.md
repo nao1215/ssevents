@@ -63,6 +63,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `id_of`, and `retry_of`. Callers that read the event name through
   the facade need to update the call site.
 
+- `decoder.apply_field_parts` no longer hand-rolls four near-identical
+  branches for `data` / `event` / `id` / `retry`. The three
+  validated-then-set fields share a new `apply_validated_field` helper
+  that takes the validation `Result` plus a setter closure; `data`
+  keeps its dedicated `apply_data_field` because it has its own
+  `TooManyDataLines` limit check. Adding a new validated field now
+  costs one entry in the `case`, not a copy-pasted block.
+
 ### Performance
 
 - `decoder.ends_with_cr` is now O(1): it slices the last byte of the
