@@ -180,6 +180,28 @@ mise install
 just ci
 ```
 
+## Release process
+
+The package version lives in [`gleam.toml`](./gleam.toml) and the
+per-version notes live in [`CHANGELOG.md`](./CHANGELOG.md). The two
+must stay in sync.
+
+While developing, add new entries to the `[Unreleased]` section. When
+cutting a release:
+
+1. Bump `version = "X.Y.Z"` in `gleam.toml`.
+2. In `CHANGELOG.md`, rename the `[Unreleased]` heading to
+   `[X.Y.Z] - YYYY-MM-DD` and re-insert a fresh empty `[Unreleased]`
+   section above it.
+3. Land the bump on `main`, then push a `vX.Y.Z` tag.
+
+Pushing the tag triggers
+[`.github/workflows/release.yml`](./.github/workflows/release.yml),
+which runs the full check suite, publishes to Hex, and creates a
+GitHub Release using the matching `[X.Y.Z]` section as its body — so
+if the section is missing or mistyped, the release notes will be
+empty.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
