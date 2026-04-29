@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Decoder: `retry` field that isn't all ASCII digits is now silently
+  ignored** per WHATWG SSE §9.2.6, instead of failing the whole decode
+  with `Error(InvalidRetry(value))`. Affects `12.5` (decimal),
+  `-100` (negative — `-` isn't an ASCII digit), the empty string, and
+  any value containing letters or punctuation. The surrounding event
+  still dispatches from its other fields. The custom `max_retry_value`
+  safety bound (a per-decoder DoS limit, not a spec rule) continues
+  to be a hard `Error(InvalidRetry(value))`. **Behavioural change**:
+  `decode("retry: nope\n\n")` previously returned
+  `Error(InvalidRetry("nope"))`; it now returns `Ok([])` (event has
+  no `data:` so nothing to dispatch). (#37)
 - **Decoder: `id` field with U+0000 NUL is now silently ignored** per
   WHATWG SSE §9.2.6, instead of failing the entire decode with
   `Error(InvalidField("id"))`. The directive in the spec is to drop

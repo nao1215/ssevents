@@ -80,8 +80,12 @@ pub fn decode_empty_data_event_test() {
 }
 
 pub fn decode_invalid_retry_test() {
+  // WHATWG SSE §9.2.6: a `retry:` value that isn't all ASCII digits
+  // is silently ignored. The only field on this event is the bad
+  // retry, so the event has no `data:` and is not dispatched at all
+  // — an empty list is the expected result.
   ssevents.decode("retry: nope\n\n")
-  |> should.equal(Error(InvalidRetry("nope")))
+  |> should.equal(Ok([]))
 }
 
 pub fn decode_bytes_invalid_utf8_in_field_name_test() {
@@ -245,6 +249,57 @@ pub fn decode_bytes_no_bom_unchanged_test() {
   let body = <<"data: hello\n\n":utf8>>
   let assert Ok(items) = ssevents.decode_bytes(body)
   items |> should.equal([EventItem(ssevents.new("hello"))])
+}
+
+// WHATWG SSE §9.2.6: retry with non-ASCII-digit value must be
+// silently ignored, not error. The surrounding event still dispatches.
+
+pub fn decode_retry_decimal_is_silently_ignored_test() {
+  let body = <<"retry: 12.5\ndata: ping\n\n":utf8>>
+  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  ssevents.retry_of(event) |> should.equal(None)
+  ssevents.data_of(event) |> should.equal("ping")
+}
+
+pub fn decode_retry_negative_is_silently_ignored_test() {
+  // Per WHATWG, "ASCII digits" excludes the `-` character — negative
+  // values must be ignored.
+  let body = <<"retry: -100\ndata: ping\n\n":utf8>>
+  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  ssevents.retry_of(event) |> should.equal(None)
+  ssevents.data_of(event) |> should.equal("ping")
+}
+
+pub fn decode_retry_empty_is_silently_ignored_test() {
+  // Zero ASCII digits is not "only ASCII digits" — ignore.
+  let body = <<"retry: \ndata: ping\n\n":utf8>>
+  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  ssevents.retry_of(event) |> should.equal(None)
+  ssevents.data_of(event) |> should.equal("ping")
+}
+
+pub fn decode_retry_alpha_is_silently_ignored_test() {
+  let body = <<"retry: abc\ndata: ping\n\n":utf8>>
+  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  ssevents.retry_of(event) |> should.equal(None)
+  ssevents.data_of(event) |> should.equal("ping")
+}
+
+pub fn decode_retry_within_limit_still_set_test() {
+  // Baseline: an all-digits value within the safety limit is still
+  // applied.
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode("retry: 1500\ndata: payload\n\n")
+  ssevents.retry_of(event) |> should.equal(Some(1500))
+}
+
+pub fn decode_retry_above_limit_still_errors_test() {
+  // The `max_retry_value` safety bound is a per-decoder limit, not a
+  // spec rule. Above-limit values stay an `InvalidRetry` error so
+  // callers can detect adversarial input. The default limit is
+  // 86_400_000 ms (one day); 99_999_999_999 is well above.
+  ssevents.decode_bytes(<<"retry: 99999999999\ndata: ping\n\n":utf8>>)
+  |> should.equal(Error(InvalidRetry("99999999999")))
 }
 
 // WHATWG SSE §9.2.6: id with NUL must be silently ignored, not error.
