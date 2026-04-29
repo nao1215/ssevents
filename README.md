@@ -29,6 +29,8 @@ gleam add ssevents
 
 ## Usage
 
+### Encode one event
+
 ```gleam
 import ssevents
 
@@ -42,19 +44,90 @@ pub fn encode_example() -> BitArray {
 }
 ```
 
+### Encode a whole SSE response body
+
 ```gleam
 import ssevents
 
-pub fn decode_example(body: BitArray) {
-  ssevents.decode_bytes(body)
+pub fn encode_response_body() -> String {
+  [
+    ssevents.comment("stream opened"),
+    ssevents.named("job.started", "job-123")
+    |> ssevents.id("cursor-1")
+    |> ssevents.event_item,
+    ssevents.heartbeat(),
+  ]
+  |> ssevents.encode_items
 }
 ```
 
+### Decode a full body
+
+```gleam
+import ssevents
+import ssevents/error as sse_error
+
+pub fn decode_example(body: BitArray) {
+  case ssevents.decode_bytes(body) {
+    Ok(items) -> items
+    Error(error) -> [ssevents.comment(sse_error.to_string(error))]
+  }
+}
+```
+
+### Incremental decode
+
 ```gleam
 import ssevents
 
-pub fn streaming_example(chunks: ssevents.Iterator(BitArray)) {
-  ssevents.decode_stream(chunks)
+pub fn incremental_decode() {
+  let state = ssevents.new_decoder()
+  let assert Ok(#(state, items1)) =
+    ssevents.push(state, <<"data: hel":utf8>>)
+  let assert [] = items1
+
+  let assert Ok(#(state, items2)) =
+    ssevents.push(state, <<"lo\n\n":utf8>>)
+  let assert [item] = items2
+
+  let assert Ok(items3) = ssevents.finish(state)
+  #(item, items3)
+}
+```
+
+### Stream adapter
+
+```gleam
+import ssevents
+
+pub fn streaming_example() {
+  let chunks =
+    ssevents.iterator_from_list([
+      <<"data: first\n\n":utf8>>,
+      <<"data: second\n\n":utf8>>,
+    ])
+
+  chunks
+  |> ssevents.decode_stream
+  |> ssevents.iterator_to_list
+}
+```
+
+### Track reconnect metadata
+
+```gleam
+import ssevents
+
+pub fn reconnect_example(item: ssevents.Item) {
+  let state =
+    ssevents.new_reconnect_state()
+    |> ssevents.update_reconnect(item)
+
+  #(
+    ssevents.last_event_id(state),
+    ssevents.retry_interval(state),
+    ssevents.last_event_id_header(state),
+  )
 }
 ```
 
@@ -64,13 +137,6 @@ pub fn streaming_example(chunks: ssevents.Iterator(BitArray)) {
 mise install
 just ci
 ```
-
-## Repository layout
-
-- `src/` library modules
-- `test/` gleeunit tests
-- `.github/workflows/` CI and release automation
-- `scripts/lib/mise_bootstrap.sh` shared toolchain bootstrap
 
 ## License
 
