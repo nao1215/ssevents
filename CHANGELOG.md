@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-30
+
+### Added
+
+- **tests**: cross-target parity and chunk-boundary tests under
+  `test/ssevents/parity_test.gleam`, covering encode/decode round-trip
+  parity, parameterised chunk-size parity, every-split-position parity,
+  line-ending (Lf/Crlf) parity, and encode/concat parity over a curated
+  15-item corpus that exercises empty data, multi-line data, named
+  events, retry boundaries, multi-byte UTF-8, and a 300-byte payload.
+  The new file is target-agnostic Gleam, so it runs on both
+  `--target erlang` and `--target javascript` via the existing test
+  recipes. Each test function is tagged with the documented invariant
+  (I1–I8) it asserts so future contributors know what must stay
+  stable. (#47)
+- **examples**: three runnable Gleam projects under `examples/`
+  (`quick_start`, `streaming_consume`, `server_emit`), each depending
+  on `ssevents` via a path dependency. They show the encode/decode
+  round-trip path, incremental decoding with reconnect-metadata
+  tracking, and producing the `BitArray` chunk sequence an HTTP server
+  would write to a `text/event-stream` response. (#46)
+- **docs**: `examples/README.md` documents the required HTTP response
+  headers (`Content-Type`, `Cache-Control: no-cache, no-transform`,
+  `Connection: keep-alive`, `X-Accel-Buffering: no`), browser-side
+  `EventSource` usage, framework wiring (Mist, Wisp), `gleam/yielder`
+  interop, proxy buffering / compression / caching caveats, and
+  `Last-Event-ID` resume semantics. The top-level README now points
+  to it. (#46)
+- **ci**: a new `examples` job in `.github/workflows/ci.yml` runs
+  `just examples` on every push, building and running each example
+  with `--warnings-as-errors` so they stay compile-checked across
+  changes to the core API. (#46)
+
 ## [0.4.0] - 2026-04-30
 
 ### Added
