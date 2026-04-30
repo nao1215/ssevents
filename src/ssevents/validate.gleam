@@ -62,7 +62,7 @@ pub fn max_data_bytes_checked(
 ) -> Result(Result(event.Event, SseError), LimitConfigError) {
   case max < 0 {
     True -> Error(NonPositiveLimit("max", max))
-    False -> Ok(max_data_bytes(event, max))
+    False -> Ok(max_data_bytes(event, max: max))
   }
 }
 
