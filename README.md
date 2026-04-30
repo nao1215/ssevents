@@ -172,6 +172,13 @@ pub fn reconnect_example(item: ssevents.Item) {
 }
 ```
 
+### Runnable examples
+
+End-to-end snippets — including server-side emit, browser-side
+consumption, HTTP header guidance, and reconnect handling — live
+under [`examples/`](./examples/). Each subdirectory is a self-contained
+Gleam project; run any of them with `cd examples/<name> && gleam run`.
+
 ## Development
 
 ```sh

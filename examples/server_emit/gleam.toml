@@ -1,0 +1,8 @@
+name = "ssevents_server_emit"
+version = "0.1.0"
+target = "erlang"
+description = "Runnable example: produce a sequence of byte chunks ready to write as an HTTP text/event-stream response body"
+
+[dependencies]
+gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+ssevents = { path = "../.." }

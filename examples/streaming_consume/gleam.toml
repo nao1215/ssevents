@@ -1,0 +1,8 @@
+name = "ssevents_streaming_consume"
+version = "0.1.0"
+target = "erlang"
+description = "Runnable example: consume an SSE stream chunk-by-chunk and track reconnect metadata"
+
+[dependencies]
+gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+ssevents = { path = "../.." }

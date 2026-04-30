@@ -55,7 +55,20 @@ check: clean
   gleam build --warnings-as-errors
   gleam test
 
-ci: deps check build-javascript test-javascript
+ci: deps check build-javascript test-javascript examples
+
+# Build and run every runnable example under examples/ with
+# --warnings-as-errors. CI runs this on every push.
+examples: example-quick-start example-streaming-consume example-server-emit
+
+example-quick-start:
+  cd examples/quick_start && gleam deps download && gleam build --warnings-as-errors && gleam run
+
+example-streaming-consume:
+  cd examples/streaming_consume && gleam deps download && gleam build --warnings-as-errors && gleam run
+
+example-server-emit:
+  cd examples/server_emit && gleam deps download && gleam build --warnings-as-errors && gleam run
 
 all: clean deps
   gleam format --check src/ test/
@@ -66,6 +79,7 @@ all: clean deps
   gleam test --target erlang
   gleam test --target javascript
   gleam docs build
+  just examples
   @echo ""
   @echo "All checks passed."
 
