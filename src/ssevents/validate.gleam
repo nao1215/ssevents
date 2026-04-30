@@ -4,6 +4,7 @@ import gleam/bit_array
 import gleam/int
 import ssevents/error.{type SseError, EventTooLarge, InvalidField, InvalidRetry}
 import ssevents/event
+import ssevents/limit.{type LimitConfigError, NonPositiveLimit}
 
 pub fn validate_event_name(name: String) -> Result(String, SseError) {
   validate_no_forbidden_bytes("event", name)
@@ -44,6 +45,24 @@ pub fn max_data_bytes(
   case data_size > max {
     True -> Error(EventTooLarge(max))
     False -> Ok(event)
+  }
+}
+
+/// Like `max_data_bytes`, but returns the argument-validation failure
+/// as a `LimitConfigError` instead of panicking. Use this when `max`
+/// comes from dynamic input.
+///
+/// The outer `Result` distinguishes argument-validation failures (a
+/// configuration error the caller can surface up the chain) from
+/// event-validation failures (the inner `Result(event.Event, SseError)`
+/// reporting whether the event itself fits the configured limit).
+pub fn max_data_bytes_checked(
+  event: event.Event,
+  max max: Int,
+) -> Result(Result(event.Event, SseError), LimitConfigError) {
+  case max < 0 {
+    True -> Error(NonPositiveLimit("max", max))
+    False -> Ok(max_data_bytes(event, max))
   }
 }
 

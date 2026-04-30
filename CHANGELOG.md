@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **limit**: `limit.new_checked(...)` returns
+  `Result(Limits, LimitConfigError)` instead of panicking on a
+  non-positive value, and the new `LimitConfigError.NonPositiveLimit(field:, given:)`
+  variant lets callers route configuration failures through their
+  normal result chain. Use this when limit values come from
+  application config, environment variables, or framework settings;
+  the panicking `limit.new` remains the right tool for hard-coded
+  programmer-trusted constants. (#49)
+- **validate**: `validate.max_data_bytes_checked(...)` returns
+  `Result(Result(event.Event, SseError), LimitConfigError)`, splitting
+  argument-validation failures (outer `Error`, configuration-shaped)
+  from event-validation failures (inner `Result`, the existing
+  `EventTooLarge` path). Use this when the size cap is sourced from
+  dynamic input. (#49)
+
 ## [0.3.0] - 2026-04-30
 
 ### Fixed
