@@ -36,6 +36,57 @@ an API gateway), confirm that **proxy-level response buffering** is
 disabled for that route. A buffered SSE stream will appear to work
 locally but stall in production.
 
+## Wiring SSE bytes into a web framework
+
+`ssevents` does not depend on Wisp, Mist, or any specific HTTP
+framework — it just produces the right bytes. The snippet below is
+the smallest end-to-end shape for a Wisp handler returning a finite
+SSE response. It is shown here as documentation rather than as a
+runnable example so the package's dev-dependency surface stays small.
+
+```gleam
+import gleam/bytes_tree
+import ssevents
+import wisp.{type Request, type Response}
+
+/// `GET /events` — return a finite, pre-encoded SSE response. For an
+/// open-ended live stream, swap `wisp.bit_array_response` for the
+/// chunked / streaming response shape your framework offers and feed
+/// it `ssevents.encode_item_bytes(item)` per emit.
+pub fn handle_events(_req: Request) -> Response {
+  let body =
+    [
+      ssevents.comment("stream opened"),
+      ssevents.named("job.started", "build #42")
+        |> ssevents.id("cursor-1")
+        |> ssevents.event_item,
+      ssevents.named("job.progress", "step 1/3")
+        |> ssevents.id("cursor-2")
+        |> ssevents.event_item,
+      ssevents.named("job.finished", "ok")
+        |> ssevents.id("cursor-3")
+        |> ssevents.event_item,
+    ]
+    |> ssevents.encode_items_bytes
+
+  wisp.bit_array_response(body, 200)
+  |> wisp.set_header("content-type", ssevents.content_type())
+  |> wisp.set_header("cache-control", "no-cache, no-transform")
+  |> wisp.set_header("connection", "keep-alive")
+  |> wisp.set_header("x-accel-buffering", "no")
+}
+```
+
+The same shape works for Mist: build the body with the encoders,
+attach the four headers above, and hand the bytes to whichever
+response constructor the framework exposes (`mist.Bytes` for a
+buffered response, the chunked-body builder for a long-lived stream).
+For a long-lived stream, prefer per-event encoding —
+`ssevents.encode_item_bytes(item)` — so each chunk you write is a
+complete event terminated by the SSE blank line; the browser-side
+`EventSource` will then dispatch as soon as each chunk lands rather
+than waiting for the full response.
+
 ## Browser client
 
 The browser side is plain JavaScript — `ssevents` does not produce a
