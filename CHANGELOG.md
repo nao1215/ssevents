@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-04
+
+### Documentation
+
+- **examples**: Add a Wisp wiring snippet under
+  "Wiring SSE bytes into a web framework" in `examples/README.md`.
+  Shows the four required SSE response headers plus
+  `ssevents.encode_items_bytes` flowing into a `wisp.bit_array_response`,
+  with a closing paragraph pointing at per-event encoding for
+  long-lived chunked streams and noting that the same shape applies
+  to Mist. The snippet stays as documentation rather than a runnable
+  example so the package keeps zero framework dependencies. (#55)
+
 ## [0.5.0] - 2026-04-30
 
 ### Added
