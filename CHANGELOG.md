@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   inside a `data:` line, breaking `decode(encode(event))`
   round-tripping. The single-pass walker is also robust against
   whatever the underlying `string.replace` does on each target. (#58)
+- **decoder**: `trim_optional_leading_space` (used for the optional
+  U+0020 SPACE after the field colon) now drops a single ASCII byte
+  via `BitArray` slicing rather than calling
+  `string.drop_start(.., up_to: 1)`. The latter operates on grapheme
+  clusters, so when the byte after the space was a combining mark
+  such as U+1B00 BALINESE SIGN ULU RICEM or U+0301 COMBINING ACUTE
+  ACCENT, the whole `space + mark` cluster was deleted and the mark
+  was silently lost on decode. The fix applies to `event:`, `id:`,
+  and comment lines (which share the helper). (#59)
 
 ## [0.6.0] - 2026-05-04
 

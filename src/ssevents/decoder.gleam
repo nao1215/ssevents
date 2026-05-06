@@ -441,9 +441,22 @@ fn split_field_bytes(
 }
 
 fn trim_optional_leading_space(value: String) -> String {
-  case string.starts_with(value, " ") {
-    True -> string.drop_start(from: value, up_to: 1)
-    False -> value
+  // WHATWG SSE §9.2.6: drop a leading U+0020 SPACE if present. The
+  // earlier `string.drop_start(.., up_to: 1)` operates on grapheme
+  // clusters, so when the byte after the space is a combining mark
+  // (e.g. U+0301, U+1B00) it deletes the whole `space + mark`
+  // cluster and silently strips the mark on decode. Slice past the
+  // single ASCII space byte instead so we drop exactly U+0020. (#59)
+  case bit_array.from_string(value) {
+    <<32, rest:bytes>> -> {
+      // Skipping a single complete UTF-8 codepoint (U+0020 = 1 byte)
+      // leaves the remainder valid UTF-8 if the input was, so the
+      // assert is a totality declaration, not error swallowing.
+      // nolint: assert_ok_pattern -- skipping U+0020 preserves UTF-8 validity
+      let assert Ok(s) = bit_array.to_string(rest)
+      s
+    }
+    _ -> value
   }
 }
 
