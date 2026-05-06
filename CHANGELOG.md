@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   through `bit_array.to_string` would have stripped a leading
   U+FEFF). The fix applies to `event:`, `id:`, and comment lines
   (which share the helper). (#59)
+- **event**: `event.retry/2` and `event.from_parts(retry: Some(_))`
+  now silently coerce out-of-range retry values to `None` at
+  construction. Previously a negative `Some(n)` survived into the
+  wire output but was dropped by §9.2.6's ASCII-digits rule on
+  decode, and a value above `limit.default_max_retry_value`
+  (24 hours in milliseconds) hard-failed the default decoder with
+  `InvalidRetry`. `decode(encode(event))` now round-trips for any
+  caller-built `Event` — matching the silent-sanitisation posture
+  already used for CR / LF / NUL inside `event:` and `id:` (#39). (#60)
 
 ## [0.6.0] - 2026-05-04
 

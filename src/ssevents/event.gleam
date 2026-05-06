@@ -8,6 +8,7 @@
 
 import gleam/option.{type Option, None, Some}
 import gleam/string
+import ssevents/limit
 
 pub opaque type Event {
   Event(
@@ -37,7 +38,7 @@ pub fn from_parts(
     event: option_sanitize(event_name),
     data: data,
     id: option_sanitize(id),
-    retry: retry,
+    retry: sanitize_retry(retry),
   )
 }
 
@@ -101,8 +102,30 @@ pub fn retry(event: Event, milliseconds: Int) -> Event {
     event: event.event,
     data: event.data,
     id: event.id,
-    retry: Some(milliseconds),
+    retry: sanitize_retry(Some(milliseconds)),
   )
+}
+
+/// Drop retry values that the SSE wire format / decoder will not
+/// round-trip back to `Some(n)` under the default `Limits`.
+///
+/// WHATWG SSE §9.2.6 only recognises retry values whose textual form
+/// is ASCII digits, so a negative value would be silently dropped on
+/// decode. Values above `limit.default_max_retry_value` (24 hours in
+/// milliseconds) hard-fail the default decoder. Coercing both to
+/// `None` here matches the silent-sanitisation posture
+/// `sanitize_field_value` takes for `event:` and `id:`, so
+/// `decode(encode(event))` returns the same event for any caller-built
+/// `Event`. (#60)
+fn sanitize_retry(retry: Option(Int)) -> Option(Int) {
+  case retry {
+    None -> None
+    Some(ms) ->
+      case ms < 0 || ms > limit.default_max_retry_value {
+        True -> None
+        False -> Some(ms)
+      }
+  }
 }
 
 pub fn data(event: Event, data: String) -> Event {
