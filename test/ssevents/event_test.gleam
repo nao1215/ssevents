@@ -96,3 +96,80 @@ pub fn encode_then_decode_round_trips_after_sanitisation_test() {
   let rewire = ssevents.encode_item(decoded)
   rewire |> should.equal(wire)
 }
+
+// Construction-time sanitisation for `retry`: a negative value is
+// silently dropped on decode by §9.2.6 ASCII-digits rule, and any
+// value above the default 24-hour cap hard-fails the decoder. Both
+// shapes are coerced to `None` at construction so encode → decode
+// is a no-op.
+
+pub fn retry_setter_drops_negative_test() {
+  let event = ssevents.new("payload") |> ssevents.retry(-100)
+  ssevents.retry_of(event) |> should.equal(None)
+}
+
+pub fn retry_setter_drops_value_above_default_max_test() {
+  // limit.default_max_retry_value == 86_400_000 (24h in ms).
+  let event = ssevents.new("payload") |> ssevents.retry(1_000_000_000)
+  ssevents.retry_of(event) |> should.equal(None)
+}
+
+pub fn retry_setter_keeps_zero_test() {
+  // Zero is a legal retry value (immediate reconnect).
+  let event = ssevents.new("payload") |> ssevents.retry(0)
+  ssevents.retry_of(event) |> should.equal(Some(0))
+}
+
+pub fn retry_setter_keeps_default_max_boundary_test() {
+  let event = ssevents.new("payload") |> ssevents.retry(86_400_000)
+  ssevents.retry_of(event) |> should.equal(Some(86_400_000))
+}
+
+pub fn from_parts_drops_negative_retry_test() {
+  let event =
+    ssevents.from_parts(
+      event_name: None,
+      data: "payload",
+      id: None,
+      retry: Some(-100),
+    )
+  ssevents.retry_of(event) |> should.equal(None)
+}
+
+pub fn from_parts_drops_out_of_range_retry_test() {
+  let event =
+    ssevents.from_parts(
+      event_name: None,
+      data: "payload",
+      id: None,
+      retry: Some(1_000_000_000),
+    )
+  ssevents.retry_of(event) |> should.equal(None)
+}
+
+pub fn encode_decode_round_trips_after_retry_sanitisation_test() {
+  // Regression for #60: prior versions emitted `retry: -100` /
+  // `retry: 1000000000` and the decoder either silently dropped or
+  // hard-failed.
+  let neg =
+    ssevents.from_parts(
+      event_name: None,
+      data: "x",
+      id: None,
+      retry: Some(-100),
+    )
+  let assert Ok([decoded_neg]) = ssevents.decode(ssevents.encode(neg))
+  ssevents.encode_item(decoded_neg)
+  |> should.equal(ssevents.encode(neg))
+
+  let huge =
+    ssevents.from_parts(
+      event_name: None,
+      data: "x",
+      id: None,
+      retry: Some(1_000_000_000),
+    )
+  let assert Ok([decoded_huge]) = ssevents.decode(ssevents.encode(huge))
+  ssevents.encode_item(decoded_huge)
+  |> should.equal(ssevents.encode(huge))
+}
