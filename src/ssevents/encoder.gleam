@@ -116,12 +116,26 @@ fn encode_comment_with_line_ending(
 ) -> String {
   let newline = line_ending_to_string(line_ending)
 
+  // WHATWG SSE §9.2.6 has no notion of a multi-line comment, so a
+  // `Comment(text)` whose `text` contained CR / LF used to fan out
+  // to one `:` line per fragment; `decoder.decode` would then
+  // surface each line as a separate `Comment`, breaking the
+  // round-trip law `decode(encode(item)) == [item]`. Strip CR / LF
+  // here so a `Comment` is always emitted as a single `:` line —
+  // same silent-sanitisation posture `sanitize_field_value` takes
+  // for `event:` and `id:` (#39). (#61)
+  let sanitised = strip_line_breaks(text)
+  comment_line(sanitised) <> newline
+}
+
+fn strip_line_breaks(text: String) -> String {
   text
-  |> normalise_newlines
-  |> string.split(on: "\n")
-  |> list.map(comment_line)
-  |> list.map(fn(line) { line <> newline })
-  |> string.concat
+  |> string.to_utf_codepoints
+  |> list.filter(fn(cp) {
+    let codepoint = string.utf_codepoint_to_int(cp)
+    codepoint != 0x0D && codepoint != 0x0A
+  })
+  |> string.from_utf_codepoints
 }
 
 fn comment_line(text: String) -> String {
