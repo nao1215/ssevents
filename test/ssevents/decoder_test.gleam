@@ -458,3 +458,14 @@ pub fn decode_id_preserves_combining_mark_after_leading_space_test() {
   let assert Ok([EventItem(decoded)]) = ssevents.decode(wire)
   ssevents.id_of(decoded) |> should.equal(Some("\u{0301}1"))
 }
+
+pub fn decode_preserves_bom_after_leading_space_test() {
+  // Regression for the JS-target footgun in #59: an initial fix
+  // that round-tripped through BitArray would stripping a U+FEFF
+  // sitting immediately after the optional space, because
+  // `TextDecoder` defaults to `ignoreBOM: false`. The codepoint-
+  // based trim preserves it.
+  let wire = "data: \u{FEFF}x\n\n"
+  let assert Ok([EventItem(decoded)]) = ssevents.decode(wire)
+  ssevents.data_of(decoded) |> should.equal("\u{FEFF}x")
+}

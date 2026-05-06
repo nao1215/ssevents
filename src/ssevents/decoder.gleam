@@ -441,22 +441,31 @@ fn split_field_bytes(
 }
 
 fn trim_optional_leading_space(value: String) -> String {
-  // WHATWG SSE §9.2.6: drop a leading U+0020 SPACE if present. The
-  // earlier `string.drop_start(.., up_to: 1)` operates on grapheme
-  // clusters, so when the byte after the space is a combining mark
-  // (e.g. U+0301, U+1B00) it deletes the whole `space + mark`
-  // cluster and silently strips the mark on decode. Slice past the
-  // single ASCII space byte instead so we drop exactly U+0020. (#59)
-  case bit_array.from_string(value) {
-    <<32, rest:bytes>> -> {
-      // Skipping a single complete UTF-8 codepoint (U+0020 = 1 byte)
-      // leaves the remainder valid UTF-8 if the input was, so the
-      // assert is a totality declaration, not error swallowing.
-      // nolint: assert_ok_pattern -- skipping U+0020 preserves UTF-8 validity
-      let assert Ok(s) = bit_array.to_string(rest)
-      s
-    }
-    _ -> value
+  // WHATWG SSE §9.2.6: drop a leading U+0020 SPACE if present.
+  //
+  // The earlier `string.drop_start(.., up_to: 1)` operated on
+  // grapheme clusters, so when the byte after the space was a
+  // combining mark (e.g. U+0301, U+1B00) the whole `space + mark`
+  // cluster was deleted and the mark was silently stripped on
+  // decode. `string.split_once` and other `string` helpers share
+  // the same grapheme semantics, so they have the same defect.
+  // Going through `BitArray` doesn't help either: on the
+  // JavaScript target `bit_array.to_string` runs through a
+  // `TextDecoder` whose default `ignoreBOM` is `false`, so a
+  // leading U+FEFF after the space would be stripped instead of
+  // preserved.
+  //
+  // Operate on UTF-8 code points instead. If the first code point
+  // is U+0020, drop it and rebuild the string from the remaining
+  // code points. This is grapheme-cluster-agnostic and BOM-safe.
+  // (#59)
+  case string.to_utf_codepoints(value) {
+    [first, ..rest] ->
+      case string.utf_codepoint_to_int(first) == 0x20 {
+        True -> string.from_utf_codepoints(rest)
+        False -> value
+      }
+    [] -> value
   }
 }
 
