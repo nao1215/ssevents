@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **encoder**: `normalise_newlines` now rewrites every CRLF / lone CR
+  to LF in a single byte-level pass. The previous two-pass
+  `string.replace` shape could leak a lone CR into the wire on the
+  BEAM for inputs whose `\r\n` neighbours another `\r` — e.g.
+  `" 0Az~\n\r\r\n"` produced wire bytes containing a literal `CR`
+  inside a `data:` line, breaking `decode(encode(event))`
+  round-tripping. The single-pass walker is also robust against
+  whatever the underlying `string.replace` does on each target. (#58)
+
 ## [0.6.0] - 2026-05-04
 
 ### Documentation

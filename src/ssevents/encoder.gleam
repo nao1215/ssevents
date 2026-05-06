@@ -146,7 +146,31 @@ fn line_ending_to_string(line_ending: LineEnding) -> String {
 }
 
 fn normalise_newlines(text: String) -> String {
-  text
-  |> string.replace(each: "\r\n", with: "\n")
-  |> string.replace(each: "\r", with: "\n")
+  // Walk the bytes once and rewrite every CRLF / lone CR to LF in a
+  // single pass. The two-pass `string.replace` shape this replaced
+  // could leave a stray CR behind on the BEAM for inputs like
+  // `"a\n\r\r\n"` — the first pass consumes the trailing `\r\n`,
+  // and the lone `\r` survives the second pass because of how
+  // `:binary.replace` handles the surrounding LF context. (#58)
+  //
+  // The walker only substitutes individual ASCII bytes, so a valid
+  // UTF-8 input remains valid UTF-8 — `let assert` here is a
+  // total-function declaration, not error swallowing.
+  // nolint: assert_ok_pattern -- ASCII-only byte substitution preserves UTF-8 validity
+  let assert Ok(s) =
+    text
+    |> bit_array.from_string
+    |> walk_normalise_newlines(<<>>)
+    |> bit_array.to_string
+  s
+}
+
+fn walk_normalise_newlines(input: BitArray, acc: BitArray) -> BitArray {
+  case input {
+    <<>> -> acc
+    <<13, 10, rest:bytes>> -> walk_normalise_newlines(rest, <<acc:bits, 10>>)
+    <<13, rest:bytes>> -> walk_normalise_newlines(rest, <<acc:bits, 10>>)
+    <<byte, rest:bytes>> -> walk_normalise_newlines(rest, <<acc:bits, byte>>)
+    _ -> acc
+  }
 }
