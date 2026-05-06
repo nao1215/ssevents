@@ -134,6 +134,42 @@ pub fn encode_normalises_isolated_cr_test() {
   |> should.equal(False)
 }
 
+pub fn encode_comment_strips_lf_to_keep_round_trip_test() {
+  // Regression for #61: previously `Comment("a\nb")` encoded to
+  // `: a\n: b\n` and decoded back to two separate `Comment`
+  // values. Stripping CR / LF inside the comment text keeps the
+  // decoder yielding a single `Comment` — same posture
+  // `sanitize_field_value` takes for `event:` and `id:`.
+  let item = event.Comment("a\nb")
+  let wire = ssevents.encode_item(item)
+  let assert Ok(decoded) = ssevents.decode(wire)
+  decoded |> should.equal([event.Comment("ab")])
+}
+
+pub fn encode_comment_strips_cr_test() {
+  let item = event.Comment("a\rb")
+  let wire = ssevents.encode_item(item)
+  let assert Ok(decoded) = ssevents.decode(wire)
+  decoded |> should.equal([event.Comment("ab")])
+}
+
+pub fn encode_comment_strips_crlf_pair_test() {
+  let item = event.Comment("a\r\nb")
+  let wire = ssevents.encode_item(item)
+  let assert Ok(decoded) = ssevents.decode(wire)
+  decoded |> should.equal([event.Comment("ab")])
+}
+
+pub fn encode_comment_round_trips_to_single_comment_test() {
+  // After stripping the encoded wire is exactly one `:` line, so
+  // decode returns exactly one `Comment` matching the sanitised
+  // input.
+  let item = event.Comment("multi\nline\rdiagnostic")
+  let wire = ssevents.encode_item(item)
+  let assert Ok(decoded) = ssevents.decode(wire)
+  decoded |> should.equal([event.Comment("multilinediagnostic")])
+}
+
 fn contains_byte(input: BitArray, target: Int) -> Bool {
   case input {
     <<>> -> False

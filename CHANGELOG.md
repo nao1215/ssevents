@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `InvalidRetry`. `decode(encode(event))` now round-trips for any
   caller-built `Event` — matching the silent-sanitisation posture
   already used for CR / LF / NUL inside `event:` and `id:` (#39). (#60)
+- **encoder**: `encode_item(Comment(text))` now strips CR / LF from
+  `text` before emitting the wire `:` line. Previously any embedded
+  line break fanned the comment out to one `:` line per fragment
+  (`Comment("a\nb")` → `: a\n: b\n`), and `decoder.decode` surfaced
+  the result as N separate `Comment` values, breaking the round-
+  trip law `decode(encode(item)) == [item]`. WHATWG SSE §9.2.6 has
+  no notion of a multi-line comment, so silently sanitising matches
+  the same posture taken for `event:` / `id:` in #39. (#61)
 
 ## [0.6.0] - 2026-05-04
 
