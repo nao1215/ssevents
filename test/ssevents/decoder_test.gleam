@@ -425,3 +425,47 @@ fn push_chunks(
       }
   }
 }
+
+pub fn decode_preserves_combining_mark_after_leading_space_test() {
+  // Regression for #59: U+1B00 BALINESE SIGN ULU RICEM after a
+  // leading space used to be dropped because
+  // `string.drop_start(.., up_to: 1)` removed the whole `space +
+  // combining-mark` grapheme cluster instead of the single
+  // U+0020 byte.
+  let wire = "event: \u{1B00}X\ndata: x\n\n"
+  let assert Ok([EventItem(decoded)]) = ssevents.decode(wire)
+  ssevents.name_of(decoded) |> should.equal(Some("\u{1B00}X"))
+  ssevents.data_of(decoded) |> should.equal("x")
+}
+
+pub fn decode_preserves_combining_acute_after_leading_space_test() {
+  // Same defect class with U+0301 COMBINING ACUTE ACCENT.
+  let wire = "event: \u{0301}E\n\n"
+  let assert Ok([EventItem(decoded)]) = ssevents.decode(wire)
+  ssevents.name_of(decoded) |> should.equal(Some("\u{0301}E"))
+}
+
+pub fn decode_comment_preserves_combining_mark_after_leading_space_test() {
+  // `decode_comment_text` shares the same trim helper, so the same
+  // bug surfaced for comments.
+  let wire = ": \u{1B00}note\n\n"
+  let assert Ok([Comment(text)]) = ssevents.decode(wire)
+  text |> should.equal("\u{1B00}note")
+}
+
+pub fn decode_id_preserves_combining_mark_after_leading_space_test() {
+  let wire = "id: \u{0301}1\ndata: x\n\n"
+  let assert Ok([EventItem(decoded)]) = ssevents.decode(wire)
+  ssevents.id_of(decoded) |> should.equal(Some("\u{0301}1"))
+}
+
+pub fn decode_preserves_bom_after_leading_space_test() {
+  // Regression for the JS-target footgun in #59: an initial fix
+  // that round-tripped through BitArray would stripping a U+FEFF
+  // sitting immediately after the optional space, because
+  // `TextDecoder` defaults to `ignoreBOM: false`. The codepoint-
+  // based trim preserves it.
+  let wire = "data: \u{FEFF}x\n\n"
+  let assert Ok([EventItem(decoded)]) = ssevents.decode(wire)
+  ssevents.data_of(decoded) |> should.equal("\u{FEFF}x")
+}
