@@ -110,8 +110,25 @@ pub fn id(event: Event, id: String) -> Event {
   event.id(event, id)
 }
 
+/// Set the SSE `retry:` reconnection time on an event.
+///
+/// `milliseconds` must be `>= 0`. WHATWG SSE §9.2.6 only recognises a
+/// retry value whose textual form "consists of only ASCII digits", so a
+/// negative value would be either dropped on the wire (the leading `-`
+/// breaks the digits-only check) or interpreted as `0` and trigger a
+/// tight reconnect loop against the server. The builder panics on
+/// `ms < 0`; reach for `retry_clamp/2` when the caller wants the
+/// lenient (clamp-to-`0`) posture.
 pub fn retry(event: Event, milliseconds: Int) -> Event {
   event.retry(event, milliseconds)
+}
+
+/// Like `retry/2`, but clamps `milliseconds < 0` to `0` instead of
+/// panicking. Use this when forwarding a value computed from possibly-
+/// noisy input (e.g. a CLI flag, a deserialised config) and the caller
+/// would rather "publish a spec-valid retry" than crash.
+pub fn retry_clamp(event: Event, milliseconds: Int) -> Event {
+  event.retry_clamp(event, milliseconds)
 }
 
 pub fn data(event: Event, data: String) -> Event {

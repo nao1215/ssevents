@@ -152,16 +152,13 @@ pub fn encode_then_decode_round_trips_after_sanitisation_test() {
   rewire |> should.equal(wire)
 }
 
-// Construction-time sanitisation for `retry`: a negative value is
-// silently dropped on decode by §9.2.6 ASCII-digits rule, and any
-// value above the default 24-hour cap hard-fails the decoder. Both
-// shapes are coerced to `None` at construction so encode → decode
-// is a no-op.
-
-pub fn retry_setter_drops_negative_test() {
-  let event = ssevents.new("payload") |> ssevents.retry(-100)
-  ssevents.retry_of(event) |> should.equal(None)
-}
+// Construction-time sanitisation for `retry` (#73, #60):
+// - `retry/2` (builder) panics on `< 0` because emitting a negative
+//   reconnection time violates WHATWG SSE §9.2.6.
+// - `retry_clamp/2` is the lenient sibling that clamps `< 0` to `0`.
+// - `from_parts/4` (decode-shaped entry point) still silently coerces
+//   `< 0` and `> default_max_retry_value` to `None` so
+//   `decode(encode(_))` round-trips for any caller-built `Event`.
 
 pub fn retry_setter_drops_value_above_default_max_test() {
   // limit.default_max_retry_value == 86_400_000 (24h in ms).
@@ -178,6 +175,44 @@ pub fn retry_setter_keeps_zero_test() {
 pub fn retry_setter_keeps_default_max_boundary_test() {
   let event = ssevents.new("payload") |> ssevents.retry(86_400_000)
   ssevents.retry_of(event) |> should.equal(Some(86_400_000))
+}
+
+pub fn retry_setter_keeps_one_million_test() {
+  // Per the issue: 1_000_000 ms is well below the default 24h cap and
+  // must round-trip without coercion.
+  let event = ssevents.new("payload") |> ssevents.retry(1_000_000)
+  ssevents.retry_of(event) |> should.equal(Some(1_000_000))
+}
+
+// --- retry_clamp lenient sibling ---
+
+pub fn retry_clamp_clamps_negative_to_zero_test() {
+  let event = ssevents.new("payload") |> ssevents.retry_clamp(-100)
+  ssevents.retry_of(event) |> should.equal(Some(0))
+}
+
+pub fn retry_clamp_clamps_minus_one_to_zero_test() {
+  // Boundary: -1 is the smallest negative; canonical reproducer from #73.
+  let event = ssevents.new("payload") |> ssevents.retry_clamp(-1)
+  ssevents.retry_of(event) |> should.equal(Some(0))
+}
+
+pub fn retry_clamp_keeps_zero_test() {
+  let event = ssevents.new("payload") |> ssevents.retry_clamp(0)
+  ssevents.retry_of(event) |> should.equal(Some(0))
+}
+
+pub fn retry_clamp_passes_through_positive_values_test() {
+  let event = ssevents.new("payload") |> ssevents.retry_clamp(2500)
+  ssevents.retry_of(event) |> should.equal(Some(2500))
+}
+
+pub fn retry_clamp_drops_above_default_max_test() {
+  // The clamp lower-bound only floors negatives; values above the
+  // default decoder cap still get the silent drop for round-trip with
+  // `decode`.
+  let event = ssevents.new("payload") |> ssevents.retry_clamp(1_000_000_000)
+  ssevents.retry_of(event) |> should.equal(None)
 }
 
 pub fn from_parts_drops_negative_retry_test() {

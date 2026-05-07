@@ -30,6 +30,7 @@ unused_exports = "off"
   "prefer_guard_clause",
   "thrown_away_error",
 ]
+"src/ssevents/event.gleam" = ["avoid_panic", "prefer_guard_clause"]
 "src/ssevents/limit.gleam" = ["avoid_panic"]
 "src/ssevents/stream.gleam" = ["deep_nesting"]
 "src/ssevents/validate.gleam" = ["avoid_panic", "prefer_guard_clause"]

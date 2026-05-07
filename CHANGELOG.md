@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **`ssevents.retry/2` and `ssevents/event.retry/2` now panic on
+  negative `milliseconds`** with
+  `"ssevents.retry: milliseconds must be >= 0 (got <n>); the SSE spec
+  mandates a non-negative reconnection time."`. Previously the builder
+  silently dropped negative values to `None` (the round-trip
+  sanitisation added in #60), which left callers unaware they had
+  passed an out-of-spec value. WHATWG SSE §9.2.6 only recognises a
+  retry value whose textual form "consists of only ASCII digits", so a
+  negative value would either be dropped by spec-compliant clients (the
+  leading `-` breaks the digits-only check) or interpreted as `0` and
+  trigger a tight reconnect loop against the server. (#73)
+
+### Added
+- **`ssevents.retry_clamp/2` (and `ssevents/event.retry_clamp/2`)** is
+  the lenient sibling of `retry/2`: it clamps `milliseconds < 0` to
+  `0` instead of panicking. Use it when forwarding a value computed
+  from possibly-noisy input (CLI flag, deserialised config) and the
+  caller would rather "publish a spec-valid retry" than crash. All
+  other behaviour matches `retry/2`, including the `> max_retry`
+  silent drop to `None` for round-trip with the default decoder. (#73)
+
 ## [0.8.0] - 2026-05-07
 
 ### Changed (BREAKING)
