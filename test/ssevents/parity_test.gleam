@@ -283,6 +283,37 @@ pub fn comment_only_roundtrip_test() {
   decoded |> should.equal([CommentItem(event.comment("hello"))])
 }
 
+// Round-trip property for #68: for every input the smart constructor
+// accepts, `decode(encode([CommentItem(comment(s))])) ==
+// [CommentItem(comment(s))]`. Construction-time sanitisation strips
+// CR / LF / NUL, so the decoded comment compares equal to the
+// re-sanitised input — even when the caller's raw string carried
+// line breaks or NUL bytes.
+pub fn comment_round_trip_property_corpus_test() {
+  list.each(
+    [
+      "",
+      "hello",
+      "hello world",
+      "with \u{1F600} emoji",
+      "with newline\nin middle",
+      "with CR\rin middle",
+      "with CRLF\r\nin middle",
+      "with NUL\u{0000}in middle",
+      "leading newline\n",
+      "\nleading newline",
+      "all\rline\nseparators\r\nmixed",
+      "ASCII only — keep verbatim",
+      "日本語のコメント",
+    ],
+    fn(raw) {
+      let item = CommentItem(event.comment(raw))
+      let assert Ok(decoded) = ssevents.decode(ssevents.encode_item(item))
+      decoded |> should.equal([item])
+    },
+  )
+}
+
 // ====== Group B: Chunk-boundary parity (parameterised) ====================
 
 // (I6) Chunked decode equals one-shot decode for several chunk sizes.

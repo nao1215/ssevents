@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `Item` variant is renamed `Comment(String)` → `CommentItem(Comment)`.
   Construct a `Comment` via the new smart constructor
   `event.comment(text: String) -> Comment`, which strips CR / LF /
-  NUL at construction (the same posture taken for `event_name`,
-  `id`, and the `data` field). Inspect with
+  NUL at construction (the same posture taken for `event_name` and
+  `id` — comments cannot be multi-line per WHATWG SSE §9.2.6, so
+  unlike `data` no LF is preserved). Inspect with
   `event.comment_text_of(c) -> String`. The convenience
   `event.comment_item(text)` wraps the two-step
   `CommentItem(comment(text))`.
