@@ -224,8 +224,10 @@ fn process_line(
         True ->
           Ok(
             #(state, [
-              event.Comment(
-                decode_comment_text(string.drop_start(from: line, up_to: 1)),
+              event.CommentItem(
+                event.comment(
+                  decode_comment_text(string.drop_start(from: line, up_to: 1)),
+                ),
               ),
             ]),
           )

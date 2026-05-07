@@ -61,7 +61,7 @@ import gleam/string
 import gleeunit/should
 import ssevents
 import ssevents/encoder
-import ssevents/event.{Comment, EventItem}
+import ssevents/event.{CommentItem, EventItem}
 
 // ====== Corpus =============================================================
 
@@ -258,7 +258,7 @@ pub fn roundtrip_single_event_test() {
         let assert Ok(decoded) = ssevents.decode(ssevents.encode(e))
         decoded |> should.equal([EventItem(e)])
       }
-      Comment(_) -> Nil
+      CommentItem(_) -> Nil
     }
   })
 }
@@ -270,7 +270,7 @@ pub fn encode_bytes_equals_from_string_for_event_test() {
       EventItem(e) ->
         ssevents.encode_bytes(e)
         |> should.equal(bit_array.from_string(ssevents.encode(e)))
-      Comment(_) -> Nil
+      CommentItem(_) -> Nil
     }
   })
 }
@@ -279,8 +279,39 @@ pub fn encode_bytes_equals_from_string_for_event_test() {
 // Backs the corpus-level assumption used by (I4).
 pub fn comment_only_roundtrip_test() {
   let assert Ok(decoded) =
-    ssevents.decode(ssevents.encode_item(Comment("hello")))
-  decoded |> should.equal([Comment("hello")])
+    ssevents.decode(ssevents.encode_item(CommentItem(event.comment("hello"))))
+  decoded |> should.equal([CommentItem(event.comment("hello"))])
+}
+
+// Round-trip property for #68: for every input the smart constructor
+// accepts, `decode(encode([CommentItem(comment(s))])) ==
+// [CommentItem(comment(s))]`. Construction-time sanitisation strips
+// CR / LF / NUL, so the decoded comment compares equal to the
+// re-sanitised input — even when the caller's raw string carried
+// line breaks or NUL bytes.
+pub fn comment_round_trip_property_corpus_test() {
+  list.each(
+    [
+      "",
+      "hello",
+      "hello world",
+      "with \u{1F600} emoji",
+      "with newline\nin middle",
+      "with CR\rin middle",
+      "with CRLF\r\nin middle",
+      "with NUL\u{0000}in middle",
+      "leading newline\n",
+      "\nleading newline",
+      "all\rline\nseparators\r\nmixed",
+      "ASCII only — keep verbatim",
+      "日本語のコメント",
+    ],
+    fn(raw) {
+      let item = CommentItem(event.comment(raw))
+      let assert Ok(decoded) = ssevents.decode(ssevents.encode_item(item))
+      decoded |> should.equal([item])
+    },
+  )
 }
 
 // ====== Group B: Chunk-boundary parity (parameterised) ====================

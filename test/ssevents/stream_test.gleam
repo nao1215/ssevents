@@ -2,7 +2,7 @@ import gleam/bit_array
 import gleam/list
 import gleeunit/should
 import ssevents
-import ssevents/event.{Comment, EventItem}
+import ssevents/event.{CommentItem, EventItem}
 import ssevents/stream
 
 pub fn stream_encode_stream_test() {
@@ -25,5 +25,8 @@ pub fn stream_decode_stream_test() {
   chunks
   |> ssevents.decode_stream
   |> stream.to_list
-  |> should.equal([Ok(Comment("hi")), Ok(EventItem(ssevents.new("x")))])
+  |> should.equal([
+    Ok(CommentItem(event.comment("hi"))),
+    Ok(EventItem(ssevents.new("x"))),
+  ])
 }

@@ -10,7 +10,7 @@ import gleam/io
 import gleam/list
 import gleam/option.{None, Some}
 import ssevents
-import ssevents/event.{Comment, EventItem}
+import ssevents/event.{CommentItem, EventItem}
 
 pub fn main() {
   let items = [
@@ -54,6 +54,6 @@ fn describe(item: ssevents.Item) -> Nil {
         "- event " <> name <> id <> retry <> ": " <> ssevents.data_of(event),
       )
     }
-    Comment(text) -> io.println("- comment: " <> text)
+    CommentItem(c) -> io.println("- comment: " <> event.comment_text_of(c))
   }
 }

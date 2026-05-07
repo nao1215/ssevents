@@ -58,7 +58,8 @@ pub fn encode_item_with_line_ending(
 ) -> String {
   case item {
     event.EventItem(ev) -> encode_with_line_ending(ev, line_ending)
-    event.Comment(text) -> encode_comment_with_line_ending(text, line_ending)
+    event.CommentItem(c) ->
+      encode_comment_with_line_ending(event.comment_text_of(c), line_ending)
   }
 }
 
@@ -114,28 +115,11 @@ fn encode_comment_with_line_ending(
   text: String,
   line_ending: LineEnding,
 ) -> String {
+  // The `Comment` opaque is sanitised at construction (#68), so by
+  // the time the encoder sees `text` it cannot contain CR / LF / NUL.
+  // Emit a single `:` line.
   let newline = line_ending_to_string(line_ending)
-
-  // WHATWG SSE §9.2.6 has no notion of a multi-line comment, so a
-  // `Comment(text)` whose `text` contained CR / LF used to fan out
-  // to one `:` line per fragment; `decoder.decode` would then
-  // surface each line as a separate `Comment`, breaking the
-  // round-trip law `decode(encode(item)) == [item]`. Strip CR / LF
-  // here so a `Comment` is always emitted as a single `:` line —
-  // same silent-sanitisation posture `sanitize_field_value` takes
-  // for `event:` and `id:` (#39). (#61)
-  let sanitised = strip_line_breaks(text)
-  comment_line(sanitised) <> newline
-}
-
-fn strip_line_breaks(text: String) -> String {
-  text
-  |> string.to_utf_codepoints
-  |> list.filter(fn(cp) {
-    let codepoint = string.utf_codepoint_to_int(cp)
-    codepoint != 0x0D && codepoint != 0x0A
-  })
-  |> string.from_utf_codepoints
+  comment_line(text) <> newline
 }
 
 fn comment_line(text: String) -> String {

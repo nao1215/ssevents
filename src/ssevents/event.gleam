@@ -1,10 +1,11 @@
 //// Event and item domain values.
 ////
-//// `Event` is opaque so the package can evolve its representation
-//// without a breaking change. Construct via `new`, `from_parts`, and
-//// the builder helpers. `Item` stays transparent because callers and
-//// helper modules frequently pattern match on whether a stream element
-//// is an event or a comment.
+//// `Event` and `Comment` are opaque so the package can evolve their
+//// representation without a breaking change. Construct via `new`,
+//// `from_parts`, and the builder helpers (for `Event`) or `comment`
+//// (for `Comment`). `Item` stays transparent so callers and helper
+//// modules can pattern match on whether a stream element is an event
+//// or a comment.
 
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -20,9 +21,42 @@ pub opaque type Event {
   )
 }
 
+/// A `:`-prefixed comment line in an SSE stream.
+///
+/// Opaque — construct with `comment/1` and inspect with
+/// `comment_text_of/1`. Comment text is sanitised at construction
+/// (CR / LF / NUL stripped) so `decode(encode([CommentItem(c)]))`
+/// returns the same `Comment` value: WHATWG SSE §9.2.6 has no
+/// notion of a multi-line comment, so any embedded line break would
+/// fan out to multiple comments on the wire and break the
+/// round-trip law.
+pub opaque type Comment {
+  Comment(text: String)
+}
+
 pub type Item {
   EventItem(Event)
-  Comment(String)
+  CommentItem(Comment)
+}
+
+/// Build a `Comment` from a text payload. CR (U+000D), LF (U+000A),
+/// and NUL (U+0000) are stripped at construction so the result
+/// round-trips through `encode → decode` without fanning out into
+/// multiple comments. Matches the `sanitize_field_value` posture
+/// already used for `event_name` and `id`.
+pub fn comment(text: String) -> Comment {
+  Comment(text: sanitize_field_value(text))
+}
+
+/// Extract the sanitised comment text.
+pub fn comment_text_of(c: Comment) -> String {
+  c.text
+}
+
+/// Wrap a `Comment` as a stream item. Convenience for the common
+/// `CommentItem(comment(text))` two-step.
+pub fn comment_item(text: String) -> Item {
+  CommentItem(comment(text))
 }
 
 pub fn new(data: String) -> Event {

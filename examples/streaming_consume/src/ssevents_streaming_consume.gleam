@@ -16,7 +16,7 @@ import gleam/io
 import gleam/list
 import gleam/option.{None, Some}
 import ssevents
-import ssevents/event.{Comment, EventItem}
+import ssevents/event.{CommentItem, EventItem}
 
 pub fn main() {
   let chunks = wire_chunks()
@@ -102,7 +102,7 @@ fn describe(item: ssevents.Item) -> Nil {
       }
       io.println("- event " <> name <> id <> ": " <> describe_data(event))
     }
-    Comment(text) -> io.println("- comment: " <> text)
+    CommentItem(c) -> io.println("- comment: " <> event.comment_text_of(c))
   }
 }
 
