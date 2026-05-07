@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-07
+
 ### Changed (BREAKING)
 - **`Comment` is now an opaque type** in `ssevents/event` and the
   `Item` variant is renamed `Comment(String)` → `CommentItem(Comment)`.
