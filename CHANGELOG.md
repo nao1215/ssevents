@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **`event.new`, `event.from_parts`, and `event.data` now sanitise
+  the `data` value at construction**: CR (U+000D) and NUL (U+0000)
+  are stripped, and a CRLF grapheme is normalised to a single LF.
+  LF is preserved as a logical line separator (the encoder splits
+  on LF to emit multi-line `data:` blocks; the decoder rejoins them
+  with LF). Previously the in-memory `data` carried whatever bytes
+  the caller passed, but the encoder ran them through
+  `normalise_newlines` on the way to the wire — so an `Event` with
+  `data = "a\r\nb"` round-tripped to an `Event` with `data = "a\nb"`,
+  violating the round-trip guarantee documented in
+  `event.gleam`'s top comment. Construction now matches the wire
+  shape, closing the round-trip law for any caller-built `Event`.
+  Matches the `sanitize_field_value` posture already used for
+  `event_name` and `id` (silent strip, not a `Result`-returning
+  builder). The `encode_normalises_lone_cr_between_lf_pair_test`
+  regression test from #58 stays in place but now relies on the
+  construction-time sanitiser to keep CR off the wire. (#67)
+
 ## [0.7.0] - 2026-05-06
 
 ### Fixed
