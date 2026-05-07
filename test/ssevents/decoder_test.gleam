@@ -6,7 +6,7 @@ import ssevents
 import ssevents/error.{
   EventTooLarge, InvalidRetry, InvalidUtf8, LineTooLong, TooManyDataLines,
 }
-import ssevents/event.{Comment, EventItem}
+import ssevents/event.{CommentItem, EventItem}
 
 pub fn decode_simple_event_test() {
   let assert Ok([EventItem(event)]) =
@@ -20,7 +20,11 @@ pub fn decode_simple_event_test() {
 
 pub fn decode_comment_and_event_test() {
   let assert Ok(items) = ssevents.decode(": hello\ndata: world\n\n")
-  items |> should.equal([Comment("hello"), EventItem(ssevents.new("world"))])
+  items
+  |> should.equal([
+    CommentItem(event.comment("hello")),
+    EventItem(ssevents.new("world")),
+  ])
 }
 
 pub fn decode_bytes_matches_string_decode_test() {
@@ -449,8 +453,8 @@ pub fn decode_comment_preserves_combining_mark_after_leading_space_test() {
   // `decode_comment_text` shares the same trim helper, so the same
   // bug surfaced for comments.
   let wire = ": \u{1B00}note\n\n"
-  let assert Ok([Comment(text)]) = ssevents.decode(wire)
-  text |> should.equal("\u{1B00}note")
+  let assert Ok([CommentItem(c)]) = ssevents.decode(wire)
+  event.comment_text_of(c) |> should.equal("\u{1B00}note")
 }
 
 pub fn decode_id_preserves_combining_mark_after_leading_space_test() {

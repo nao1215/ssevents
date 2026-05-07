@@ -13,7 +13,7 @@ pub fn new() -> ReconnectState {
 
 pub fn update(state: ReconnectState, item: event.Item) -> ReconnectState {
   case item {
-    event.Comment(_) -> state
+    event.CommentItem(_) -> state
     event.EventItem(ev) ->
       ReconnectState(
         last_event_id: option.or(event.id_of(ev), state.last_event_id),

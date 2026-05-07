@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- **`Comment` is now an opaque type** in `ssevents/event` and the
+  `Item` variant is renamed `Comment(String)` → `CommentItem(Comment)`.
+  Construct a `Comment` via the new smart constructor
+  `event.comment(text: String) -> Comment`, which strips CR / LF /
+  NUL at construction (the same posture taken for `event_name`,
+  `id`, and the `data` field). Inspect with
+  `event.comment_text_of(c) -> String`. The convenience
+  `event.comment_item(text)` wraps the two-step
+  `CommentItem(comment(text))`.
+
+  Why: WHATWG SSE §9.2.6 has no notion of a multi-line comment, so
+  any embedded line break in a `Comment` value would fan out to
+  multiple `:` lines on the wire and the decoder would surface them
+  as separate `Comment` items — breaking
+  `decode(encode([CommentItem(c)])) == [CommentItem(c)]`. Closing
+  the round-trip law at construction is the same fix shape as #67
+  for `Event.data`. The `encode_item` / `decode` paths now rely on
+  the construction-time invariant; the encoder no longer needs the
+  `strip_line_breaks` workaround that #61 introduced.
+
+  Migration:
+  - `event.Comment(text)` constructor → `event.comment(text)` (or
+    `event.comment_item(text)` if you immediately want an `Item`).
+  - Pattern match `event.Comment(text)` → `event.CommentItem(c)`
+    plus `let text = event.comment_text_of(c)`.
+
+  The facade helper `ssevents.comment(text)` is unchanged on the
+  surface — it still returns an `Item`, matching the previous
+  behaviour. Built-in examples (`quick_start`, `streaming_consume`)
+  and tests are updated. (#68)
+
 ### Fixed
 - **`event.new`, `event.from_parts`, and `event.data` now sanitise
   the `data` value at construction**: CR (U+000D) and NUL (U+0000)

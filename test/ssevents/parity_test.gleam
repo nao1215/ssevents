@@ -61,7 +61,7 @@ import gleam/string
 import gleeunit/should
 import ssevents
 import ssevents/encoder
-import ssevents/event.{Comment, EventItem}
+import ssevents/event.{CommentItem, EventItem}
 
 // ====== Corpus =============================================================
 
@@ -258,7 +258,7 @@ pub fn roundtrip_single_event_test() {
         let assert Ok(decoded) = ssevents.decode(ssevents.encode(e))
         decoded |> should.equal([EventItem(e)])
       }
-      Comment(_) -> Nil
+      CommentItem(_) -> Nil
     }
   })
 }
@@ -270,7 +270,7 @@ pub fn encode_bytes_equals_from_string_for_event_test() {
       EventItem(e) ->
         ssevents.encode_bytes(e)
         |> should.equal(bit_array.from_string(ssevents.encode(e)))
-      Comment(_) -> Nil
+      CommentItem(_) -> Nil
     }
   })
 }
@@ -279,8 +279,8 @@ pub fn encode_bytes_equals_from_string_for_event_test() {
 // Backs the corpus-level assumption used by (I4).
 pub fn comment_only_roundtrip_test() {
   let assert Ok(decoded) =
-    ssevents.decode(ssevents.encode_item(Comment("hello")))
-  decoded |> should.equal([Comment("hello")])
+    ssevents.decode(ssevents.encode_item(CommentItem(event.comment("hello"))))
+  decoded |> should.equal([CommentItem(event.comment("hello"))])
 }
 
 // ====== Group B: Chunk-boundary parity (parameterised) ====================
