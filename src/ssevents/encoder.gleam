@@ -19,6 +19,17 @@ pub fn default_line_ending() -> LineEnding {
   Lf
 }
 
+/// Encode one semantic SSE `Event` to its wire-format `String` (LF
+/// line ending).
+///
+/// **Determinism invariant** (#72): the encoded bytes depend only on
+/// the *value* of the `Event`, not on the builder call sequence used to
+/// construct it. For any two structurally equal `Event` values
+/// (`Event.from_parts(...)` with the same fields, or any sequence of
+/// builder calls that ends in the same field assignment),
+/// `encode(a) == encode(b)` byte-for-byte. The same invariant holds
+/// across the BEAM and JavaScript targets, so caches, signatures, and
+/// content-addressable storage on the wire are stable across runtimes.
 pub fn encode(event: event.Event) -> String {
   encode_with_line_ending(event, Lf)
 }
