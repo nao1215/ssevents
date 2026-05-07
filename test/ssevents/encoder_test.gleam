@@ -105,10 +105,9 @@ pub fn encode_items_bytes_matches_item_concatenation_test() {
 
 pub fn encode_normalises_lone_cr_between_lf_pair_test() {
   // Regression for #58: input " 0Az~\n\r\r\n" used to leak a lone CR
-  // into the wire because the second-pass `string.replace("\r", "\n")`
-  // failed to rewrite the surviving CR after the first pass had
-  // consumed `\r\n`. The single-pass byte walker rewrites every CRLF
-  // and lone CR to LF.
+  // into the wire. As of #67, `event.new` strips CR at construction
+  // so the encoder never sees a CR byte to begin with, and the
+  // round-trip is closed at construction rather than at encode.
   let event = ssevents.new(" 0Az~\n\r\r\n")
   let wire = ssevents.encode(event)
 
@@ -118,10 +117,12 @@ pub fn encode_normalises_lone_cr_between_lf_pair_test() {
   |> should.equal(False)
 
   // The data field must round-trip through encode/decode losslessly.
+  // CR is dropped at construction; the surviving LF preserves the
+  // logical-newline semantics of the original input.
   let assert Ok([decoded_item]) = ssevents.decode(wire)
   let assert event.EventItem(decoded_event) = decoded_item
   ssevents.data_of(decoded_event)
-  |> should.equal(" 0Az~\n\n\n")
+  |> should.equal(ssevents.data_of(event))
 }
 
 pub fn encode_normalises_isolated_cr_test() {

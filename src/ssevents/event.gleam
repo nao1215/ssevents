@@ -6,6 +6,7 @@
 //// helper modules frequently pattern match on whether a stream element
 //// is an event or a comment.
 
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import ssevents/limit
@@ -25,7 +26,7 @@ pub type Item {
 }
 
 pub fn new(data: String) -> Event {
-  Event(event: None, data: data, id: None, retry: None)
+  Event(event: None, data: sanitize_data_value(data), id: None, retry: None)
 }
 
 pub fn from_parts(
@@ -36,7 +37,7 @@ pub fn from_parts(
 ) -> Event {
   Event(
     event: option_sanitize(event_name),
-    data: data,
+    data: sanitize_data_value(data),
     id: option_sanitize(id),
     retry: sanitize_retry(retry),
   )
@@ -129,7 +130,44 @@ fn sanitize_retry(retry: Option(Int)) -> Option(Int) {
 }
 
 pub fn data(event: Event, data: String) -> Event {
-  Event(event: event.event, data: data, id: event.id, retry: event.retry)
+  Event(
+    event: event.event,
+    data: sanitize_data_value(data),
+    id: event.id,
+    retry: event.retry,
+  )
+}
+
+/// Strip CR (U+000D) and NUL (U+0000) from a `data` value, and
+/// convert standalone CRLF graphemes to LF.
+///
+/// WHATWG SSE §9.2.6 normalises CR / CRLF / LF to LF on the wire side
+/// and silently drops NUL, so neither sequence can survive
+/// `decode(encode(x))` verbatim inside `data`. Strip / normalise both
+/// at construction so the in-memory representation already matches
+/// what the wire would carry. LF is preserved — `data` may
+/// legitimately contain logical newlines, and the encoder splits on
+/// LF to emit multi-line `data:` blocks; the decoder rejoins those
+/// lines with LF, so `\n` round-trips cleanly.
+///
+/// The implementation maps over Unicode graphemes (`\r\n` is a single
+/// grapheme per UAX #29). A `string.replace`-based pass cannot strip
+/// the `\r` half of a CRLF pair on the JavaScript target because the
+/// CRLF grapheme is opaque to substring search.
+fn sanitize_data_value(value: String) -> String {
+  value
+  |> string.to_graphemes
+  |> list.flat_map(map_data_grapheme)
+  |> string.join(with: "")
+}
+
+fn map_data_grapheme(grapheme: String) -> List(String) {
+  case grapheme {
+    "\r" -> []
+    "\u{0000}" -> []
+    "\r\n" -> ["\n"]
+    other -> [other]
+  }
 }
 
 pub fn name_of(event: Event) -> Option(String) {

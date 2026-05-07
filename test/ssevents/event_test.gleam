@@ -44,6 +44,61 @@ pub fn id_setter_strips_nul_test() {
   ssevents.id_of(event) |> should.equal(Some("withnul"))
 }
 
+pub fn new_strips_lone_cr_from_data_test() {
+  // #67: a literal CR in `data` cannot survive `decode(encode(x))`
+  // verbatim — the wire would coerce it. Strip at construction so
+  // `data_of(new(x))` already reflects what the wire would carry.
+  let event = ssevents.new("a\rb")
+  ssevents.data_of(event) |> should.equal("ab")
+}
+
+pub fn new_strips_cr_from_crlf_pair_in_data_test() {
+  // The CR half of a CRLF pair is removed; the LF survives as a
+  // logical newline (the encoder will emit it as a separate
+  // `data:` line).
+  let event = ssevents.new("a\r\nb")
+  ssevents.data_of(event) |> should.equal("a\nb")
+}
+
+pub fn new_strips_nul_from_data_test() {
+  // NUL is dropped silently by the decoder per §9.2.6.
+  let event = ssevents.new("hello\u{0000}world")
+  ssevents.data_of(event) |> should.equal("helloworld")
+}
+
+pub fn new_preserves_lf_in_data_test() {
+  // LF inside `data` is a *logical* line separator — the encoder
+  // splits on it to emit a multi-line `data:` block. Stripping it
+  // would lose information that round-trips correctly.
+  let event = ssevents.new("first\nsecond")
+  ssevents.data_of(event) |> should.equal("first\nsecond")
+}
+
+pub fn data_setter_strips_cr_test() {
+  // Same rule via the builder helper.
+  let event = ssevents.new("ignored") |> ssevents.data("a\rb")
+  ssevents.data_of(event) |> should.equal("ab")
+}
+
+pub fn from_parts_strips_cr_in_data_test() {
+  let event =
+    ssevents.from_parts(event_name: None, data: "x\ry", id: None, retry: None)
+  ssevents.data_of(event) |> should.equal("xy")
+}
+
+pub fn data_round_trips_after_cr_sanitisation_test() {
+  // The reproducer from #67: build with CRLF, encode, decode, and
+  // confirm the in-memory data after construction equals the
+  // post-decode data.
+  let event = ssevents.new("a\r\nb")
+  let wire = ssevents.encode(event)
+  let assert Ok([decoded]) = ssevents.decode(wire)
+  ssevents.encode_item(decoded) |> should.equal(wire)
+  // And the in-memory value already matches the wire round-trip
+  // (CR removed, LF preserved as a logical newline).
+  ssevents.data_of(event) |> should.equal("a\nb")
+}
+
 pub fn from_parts_strips_lf_in_event_name_test() {
   let event =
     ssevents.from_parts(
