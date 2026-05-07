@@ -7,6 +7,7 @@
 //// modules can pattern match on whether a stream element is an event
 //// or a comment.
 
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
@@ -132,12 +133,54 @@ fn option_sanitize(opt: Option(String)) -> Option(String) {
   }
 }
 
+/// Set the SSE `retry:` reconnection time on an event.
+///
+/// `milliseconds` must be `>= 0`. WHATWG SSE §9.2.6 only recognises a
+/// retry value whose textual form "consists of only ASCII digits", so a
+/// negative value would be either dropped on the wire (the leading `-`
+/// breaks the digits-only check) or interpreted as `0` and trigger a
+/// tight reconnect loop against the server. Either outcome is a
+/// contract violation, so the builder panics on `ms < 0` with
+/// `"ssevents.retry: milliseconds must be >= 0 (got <n>); the SSE spec
+/// mandates a non-negative reconnection time."`. Use `retry_clamp/2`
+/// instead when the caller wants the lenient (clamp-to-`0`) behaviour.
+///
+/// Values above `limit.default_max_retry_value` (24 h in ms) are still
+/// silently dropped to `None`, matching `from_parts/4` and the
+/// `decode(encode(_))` round-trip property pinned in #60.
 pub fn retry(event: Event, milliseconds: Int) -> Event {
+  case milliseconds < 0 {
+    True ->
+      panic as {
+        "ssevents.retry: milliseconds must be >= 0 (got "
+        <> int.to_string(milliseconds)
+        <> "); the SSE spec mandates a non-negative reconnection time."
+      }
+    False ->
+      Event(
+        event: event.event,
+        data: event.data,
+        id: event.id,
+        retry: sanitize_retry(Some(milliseconds)),
+      )
+  }
+}
+
+/// Like `retry/2`, but clamps `milliseconds < 0` to `0` instead of
+/// panicking. Use this when the caller wants the lenient posture
+/// (e.g. when forwarding a value computed from possibly-noisy input).
+/// All other behaviour matches `retry/2`, including the `> max_retry`
+/// silent drop to `None` for round-trip with the default decoder.
+pub fn retry_clamp(event: Event, milliseconds: Int) -> Event {
+  let clamped = case milliseconds < 0 {
+    True -> 0
+    False -> milliseconds
+  }
   Event(
     event: event.event,
     data: event.data,
     id: event.id,
-    retry: sanitize_retry(Some(milliseconds)),
+    retry: sanitize_retry(Some(clamped)),
   )
 }
 
