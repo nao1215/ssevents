@@ -29,6 +29,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   other behaviour matches `retry/2`, including the `> max_retry`
   silent drop to `None` for round-trip with the default decoder. (#73)
 
+### Documentation
+- **`encoder.encode/1` doc string** now states the determinism
+  invariant explicitly: the encoded bytes depend only on the *value*
+  of the `Event`, not on the builder call sequence used to construct
+  it. The same property holds across the BEAM and JavaScript targets,
+  so caches, signatures, and content-addressable storage on the wire
+  are stable across runtimes. (#72)
+
+### Tests
+- New `test/ssevents/encode_determinism_test.gleam` pins the
+  builder-call-order invariance with ten deterministic cases covering
+  every interleaving of the four optional setters
+  (`event` / `id` / `retry` / `data`), `from_parts/4` vs builder
+  parity, multiline `data`, idempotent setters, and last-write-wins
+  semantics. metamon is not a dev-dep so the property is exercised
+  exhaustively over a hand-picked permutation space rather than via
+  `forall_morph`. (#72)
+
 ## [0.8.0] - 2026-05-07
 
 ### Changed (BREAKING)
