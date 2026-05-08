@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-08
+
 ### Fixed
 - **`ssevents.retry/2` and `ssevents/event.retry/2` now panic on
   negative `milliseconds`** with
