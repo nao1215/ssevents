@@ -52,6 +52,10 @@ pub type ReconnectState =
 pub type SseError =
   error.SseError
 
+/// Re-export of `ssevents/event.EventError`.
+pub type EventError =
+  event.EventError
+
 pub type Iterator(a) =
   stream.Iterator(a)
 
@@ -109,6 +113,48 @@ pub fn event(event: Event, name: String) -> Event {
 
 pub fn id(event: Event, id: String) -> Event {
   event.id(event, id)
+}
+
+/// Strict counterpart of `event/2`: returns
+/// `Error(NameContainsControlBytes(value:))` when the name
+/// contains CR / LF / NUL bytes, otherwise sets the SSE
+/// `event:` field name. Use when the name comes from user-typed
+/// or upstream input and silent stripping would lose data the
+/// caller cares about. (#81)
+pub fn event_checked(event: Event, name: String) -> Result(Event, EventError) {
+  event.event_checked(event, name)
+}
+
+/// Strict counterpart of `id/2`: returns
+/// `Error(IdContainsControlBytes(value:))` when the id contains
+/// CR / LF / NUL bytes. The strip on id is especially dangerous —
+/// `id(_, "ab\u{0000}cd")` produces an event with `id = "abcd"`,
+/// silently mutating an authorisation-relevant identifier on
+/// reconnect (Last-Event-ID resume). The strict variant catches
+/// this at the builder boundary. (#81)
+pub fn id_checked(event: Event, id: String) -> Result(Event, EventError) {
+  event.id_checked(event, id)
+}
+
+/// Strict counterpart of `named/2`: returns
+/// `Error(NameContainsControlBytes(value:))` when the name
+/// contains CR / LF / NUL bytes. Convenience for the common
+/// `new |> event_checked` pipeline. (#81)
+pub fn named_checked(name: String, data: String) -> Result(Event, EventError) {
+  event.named_checked(name, data)
+}
+
+/// Strict counterpart of `comment/1`: returns
+/// `Error(CommentContainsControlBytes(value:))` when the comment
+/// text contains CR / LF / NUL bytes. The non-strict `comment/1`
+/// silently strips these bytes; WHATWG SSE §9.2.6 has no notion
+/// of a multi-line comment, so embedded line breaks would fan out
+/// into multiple comments on the wire. (#81)
+pub fn comment_checked(text: String) -> Result(Item, EventError) {
+  case event.comment_checked(text) {
+    Ok(comment) -> Ok(event.comment_item_of(comment))
+    Error(error_value) -> Error(error_value)
+  }
 }
 
 /// Set the SSE `retry:` reconnection time on an event.

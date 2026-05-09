@@ -40,11 +40,41 @@ pub type Item {
   CommentItem(Comment)
 }
 
+/// Reasons the strict event-builder variants reject input.
+///
+/// The non-strict `event` / `id` / `named` / `comment` constructors
+/// silently strip CR / LF / NUL bytes from the values that flow into
+/// SSE field lines (so `named("\n", _)` produces an event with
+/// `name = ""`, and `id(_, "ab\u{0000}cd")` produces an event with
+/// `id = "abcd"` — a *different valid id*). The silent strip is
+/// data loss the caller cannot observe — a naive equality check on
+/// the recovered name silently matches the wrong subscription
+/// channel. The `*_checked` variants surface this as a typed error
+/// so callers can render "name `foo\\nbar` contains forbidden
+/// control bytes" rather than producing the wrong wire silently.
+/// (#81)
+pub type EventError {
+  /// `event_checked` saw CR / LF / NUL bytes in the event name.
+  /// Carries the original (un-sanitized) value.
+  NameContainsControlBytes(value: String)
+  /// `id_checked` saw CR / LF / NUL bytes in the event id.
+  /// Carries the original (un-sanitized) value.
+  IdContainsControlBytes(value: String)
+  /// `comment_checked` saw CR / LF / NUL bytes in the comment text.
+  /// Carries the original (un-sanitized) value.
+  CommentContainsControlBytes(value: String)
+}
+
 /// Build a `Comment` from a text payload. CR (U+000D), LF (U+000A),
 /// and NUL (U+0000) are stripped at construction so the result
 /// round-trips through `encode → decode` without fanning out into
 /// multiple comments. Matches the `sanitize_field_value` posture
 /// already used for `event_name` and `id`.
+///
+/// The silent strip is data loss the caller cannot observe. Reach
+/// for `comment_checked/1` instead when comment text comes from
+/// user-typed or upstream input and a typed error is preferable to
+/// a silently-truncated comment. (#81)
 pub fn comment(text: String) -> Comment {
   Comment(text: sanitize_field_value(text))
 }
@@ -58,6 +88,14 @@ pub fn comment_text_of(c: Comment) -> String {
 /// `CommentItem(comment(text))` two-step.
 pub fn comment_item(text: String) -> Item {
   CommentItem(comment(text))
+}
+
+/// Wrap an already-validated `Comment` as a stream item. Companion
+/// to `comment_checked/1` so callers can keep the typed-error
+/// pipeline `text -> Result(Comment, EventError) -> Result(Item, _)`
+/// without reaching into `Item`'s constructors. (#81)
+pub fn comment_item_of(c: Comment) -> Item {
+  CommentItem(c)
 }
 
 /// Issue #77: Item-level accessors. The `Item` variants `EventItem` /
@@ -124,10 +162,21 @@ pub fn message(data: String) -> Event {
   new(data)
 }
 
+/// Build an event with both `name` and `data`. CR / LF / NUL bytes
+/// in `name` are silently stripped — see the warning on `event/2`.
+/// Reach for `named_checked/2` when the bad-input case must be
+/// surfaced as a typed error. (#81)
 pub fn named(name: String, data: String) -> Event {
   new(data) |> event(name)
 }
 
+/// Set the SSE `event:` field name on an event. CR / LF / NUL bytes
+/// are silently stripped to keep the wire spec-compliant — so
+/// `named("\n", _)` produces an event with `name = ""`. The strip
+/// is data loss the caller cannot observe; reach for
+/// `event_checked/2` when the name comes from user-typed or
+/// upstream input and a typed error is preferable to silent data
+/// loss. (#81)
 pub fn event(event: Event, name: String) -> Event {
   Event(
     event: Some(sanitize_field_value(name)),
@@ -137,6 +186,13 @@ pub fn event(event: Event, name: String) -> Event {
   )
 }
 
+/// Set the SSE `id:` Last-Event-ID on an event. CR / LF / NUL bytes
+/// are silently stripped — so `id(_, "ab\u{0000}cd")` produces an
+/// event with `id = "abcd"`, a *different valid id*, which can
+/// silently match the wrong subscription channel on reconnect.
+/// Reach for `id_checked/2` when the id comes from user-typed or
+/// upstream input and a typed error is preferable to silent
+/// authorization-relevant identifier mutation. (#81)
 pub fn id(event: Event, id: String) -> Event {
   Event(
     event: event.event,
@@ -144,6 +200,83 @@ pub fn id(event: Event, id: String) -> Event {
     id: Some(sanitize_field_value(id)),
     retry: event.retry,
   )
+}
+
+/// Strict counterpart of `event/2`: rejects names containing CR /
+/// LF / NUL bytes with `Error(NameContainsControlBytes(value:))`.
+///
+/// The non-strict `event/2` silently strips these bytes (so
+/// `named("\n", _)` produces a part with `name = ""`). For callers
+/// passing user-typed or upstream data into the event name and want
+/// to surface bad inputs as a typed error rather than silent data
+/// loss, use this variant. The `value` payload carries the
+/// caller's original input so the error renders as
+/// "event name `foo\\nbar` contains forbidden control bytes". (#81)
+pub fn event_checked(
+  source_event: Event,
+  name: String,
+) -> Result(Event, EventError) {
+  case has_forbidden_byte(name) {
+    True -> Error(NameContainsControlBytes(value: name))
+    False -> Ok(event(source_event, name))
+  }
+}
+
+/// Strict counterpart of `id/2`: rejects ids containing CR / LF /
+/// NUL bytes with `Error(IdContainsControlBytes(value:))`.
+///
+/// The non-strict `id/2` silently strips these bytes. The strip on
+/// the id is especially dangerous — `id(_, "ab\u{0000}cd")`
+/// produces an event with `id = "abcd"`, a *different valid id*,
+/// which can silently match the wrong subscription channel on
+/// reconnect (Last-Event-ID resume). The strict variant catches
+/// this at the builder boundary so the wrong wire never gets
+/// produced. (#81)
+pub fn id_checked(event: Event, id: String) -> Result(Event, EventError) {
+  case has_forbidden_byte(id) {
+    True -> Error(IdContainsControlBytes(value: id))
+    False -> Ok(id_internal(event, id))
+  }
+}
+
+fn id_internal(event: Event, id_value: String) -> Event {
+  Event(
+    event: event.event,
+    data: event.data,
+    id: Some(sanitize_field_value(id_value)),
+    retry: event.retry,
+  )
+}
+
+/// Strict counterpart of `named/2`: rejects names containing CR /
+/// LF / NUL bytes with `Error(NameContainsControlBytes(value:))`.
+///
+/// Convenience for the common `new |> event_checked` pipeline that
+/// also constructs a fresh `Event`. (#81)
+pub fn named_checked(name: String, data: String) -> Result(Event, EventError) {
+  event_checked(new(data), name)
+}
+
+/// Strict counterpart of `comment/1`: rejects comment text
+/// containing CR / LF / NUL bytes with
+/// `Error(CommentContainsControlBytes(value:))`.
+///
+/// The non-strict `comment/1` silently strips these bytes.
+/// WHATWG SSE §9.2.6 has no notion of a multi-line comment, so
+/// embedded line breaks would fan out into multiple comments on
+/// the wire; the strict variant surfaces this as an explicit
+/// error rather than silently splitting the caller's intent. (#81)
+pub fn comment_checked(text: String) -> Result(Comment, EventError) {
+  case has_forbidden_byte(text) {
+    True -> Error(CommentContainsControlBytes(value: text))
+    False -> Ok(comment(text))
+  }
+}
+
+fn has_forbidden_byte(value: String) -> Bool {
+  string.contains(value, "\r")
+  || string.contains(value, "\n")
+  || string.contains(value, "\u{0000}")
 }
 
 /// Strip CR (U+000D), LF (U+000A), and NUL (U+0000) from `value`.

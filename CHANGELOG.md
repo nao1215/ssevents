@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`ssevents/event`**: `event_checked` / `id_checked` /
+  `named_checked` / `comment_checked` are the typed-error
+  counterparts of the existing `event` / `id` / `named` /
+  `comment` constructors. The non-strict variants silently strip
+  CR / LF / NUL bytes from the values that flow into SSE field
+  lines (so `named("\n", _)` produces `name = ""`, and
+  `id(_, "ab\u{0000}cd")` produces `id = "abcd"` — a *different
+  valid id* that can silently match the wrong subscription
+  channel on Last-Event-ID resume). The strict variants surface
+  bad input as
+  `Error(NameContainsControlBytes(value:))` /
+  `Error(IdContainsControlBytes(value:))` /
+  `Error(CommentContainsControlBytes(value:))` so callers
+  passing user-typed or upstream data can render an actionable
+  error rather than producing the wrong wire silently. Add the
+  matching `EventError` type (re-exported from the top-level
+  `ssevents` module) and a `comment_item_of/1` helper that wraps
+  an already-validated `Comment` into an `Item`. The existing
+  non-strict variants keep their void return for backward
+  compatibility, with doc-comments updated to point at the strict
+  counterparts. (#81)
 - Property-based tests using
   [metamon](https://github.com/nao1215/metamon) covering the
   encoder → decoder round-trip and the `ssevents/event`
