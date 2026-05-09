@@ -263,3 +263,78 @@ pub fn encode_decode_round_trips_after_retry_sanitisation_test() {
   ssevents.encode_item(decoded_huge)
   |> should.equal(ssevents.encode(huge))
 }
+
+// Issue #77: facade-level Item accessors so callers can pattern-match
+// (or filter) on decoded items without reaching into `ssevents/event`.
+
+pub fn is_event_distinguishes_event_and_comment_test() {
+  let ev = ssevents.event_item(ssevents.new("hello"))
+  let cm = ssevents.comment("ping")
+  ssevents.is_event(ev) |> should.equal(True)
+  ssevents.is_event(cm) |> should.equal(False)
+  ssevents.is_comment(ev) |> should.equal(False)
+  ssevents.is_comment(cm) |> should.equal(True)
+}
+
+pub fn event_of_item_returns_event_for_event_item_test() {
+  let underlying = ssevents.new("payload") |> ssevents.event("job.update")
+  let item = ssevents.event_item(underlying)
+  case ssevents.event_of_item(item) {
+    Some(ev) -> ssevents.name_of(ev) |> should.equal(Some("job.update"))
+    None -> should.fail()
+  }
+}
+
+pub fn event_of_item_returns_none_for_comment_test() {
+  ssevents.event_of_item(ssevents.comment("ping"))
+  |> should.equal(None)
+}
+
+pub fn comment_text_of_item_returns_text_for_comment_test() {
+  ssevents.comment_text_of_item(ssevents.comment("ping"))
+  |> should.equal(Some("ping"))
+}
+
+pub fn comment_text_of_item_returns_none_for_event_test() {
+  let item = ssevents.event_item(ssevents.new("payload"))
+  ssevents.comment_text_of_item(item) |> should.equal(None)
+}
+
+pub fn events_of_filters_to_event_payloads_test() {
+  let items = [
+    ssevents.event_item(ssevents.named("a", "data-a")),
+    ssevents.comment("ignore"),
+    ssevents.event_item(ssevents.named("b", "data-b")),
+    ssevents.heartbeat(),
+  ]
+  let events = ssevents.events_of(items)
+  case events {
+    [first, second] -> {
+      ssevents.name_of(first) |> should.equal(Some("a"))
+      ssevents.name_of(second) |> should.equal(Some("b"))
+    }
+    _ -> should.fail()
+  }
+}
+
+pub fn comment_texts_of_filters_to_comment_text_test() {
+  let items = [
+    ssevents.event_item(ssevents.new("payload")),
+    ssevents.comment("hello"),
+    ssevents.comment("world"),
+  ]
+  ssevents.comment_texts_of(items)
+  |> should.equal(["hello", "world"])
+}
+
+// The README example from Issue #77 — pin down that pattern-matching
+// on a decoded item now works through `ssevents.event_of_item` rather
+// than reaching into ssevents/event for the EventItem variant.
+pub fn issue_77_decode_and_inspect_first_event_test() {
+  let wire = "event: job.update\ndata: hello\n\n"
+  let assert Ok(items) = ssevents.decode(wire)
+  case ssevents.events_of(items) {
+    [first, ..] -> ssevents.name_of(first) |> should.equal(Some("job.update"))
+    [] -> should.fail()
+  }
+}

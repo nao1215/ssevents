@@ -15,7 +15,8 @@
 //// missing entry point can be added at this level is preferred to
 //// scattering submodule imports across user code.
 
-import gleam/option.{type Option}
+import gleam/list
+import gleam/option.{type Option, None, Some}
 import ssevents/decoder
 import ssevents/encoder
 import ssevents/error
@@ -145,6 +146,59 @@ pub fn comment(text: String) -> Item {
 
 pub fn heartbeat() -> Item {
   heartbeat.heartbeat()
+}
+
+/// Issue #77: Item-level inspection helpers exposed through the
+/// facade. The `Item` type is re-exported as a type alias from this
+/// module, but Gleam's type aliases do not carry the underlying
+/// `EventItem` / `CommentItem` constructors — pattern-matching on a
+/// decoded `Item` therefore requires reaching into
+/// `ssevents/event` for the variants. These accessors let callers stay
+/// inside the facade for the common cases.
+/// `True` when the item is an event (carries an SSE `Event` payload).
+pub fn is_event(item: Item) -> Bool {
+  event.is_event(item)
+}
+
+/// `True` when the item is a `:`-prefixed comment line.
+pub fn is_comment(item: Item) -> Bool {
+  event.is_comment(item)
+}
+
+/// Return the event payload when the item is an event, `None`
+/// otherwise. Pairs with `comment_text_of_item/1` for the comment
+/// side.
+pub fn event_of_item(item: Item) -> Option(Event) {
+  event.event_of_item(item)
+}
+
+/// Return the comment text when the item is a comment, `None`
+/// otherwise.
+pub fn comment_text_of_item(item: Item) -> Option(String) {
+  event.comment_text_of_item(item)
+}
+
+/// Filter a decoded item list down to its events, dropping comments.
+/// Convenience for the common "I just want the events" pattern after
+/// `decode/1`.
+pub fn events_of(items: List(Item)) -> List(Event) {
+  list.filter_map(items, fn(item) {
+    case event.event_of_item(item) {
+      Some(ev) -> Ok(ev)
+      None -> Error(Nil)
+    }
+  })
+}
+
+/// Filter a decoded item list down to its comment texts, dropping
+/// events. Pairs with `events_of/1`.
+pub fn comment_texts_of(items: List(Item)) -> List(String) {
+  list.filter_map(items, fn(item) {
+    case event.comment_text_of_item(item) {
+      Some(text) -> Ok(text)
+      None -> Error(Nil)
+    }
+  })
 }
 
 pub fn default_line_ending() -> LineEnding {
