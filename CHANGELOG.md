@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-09
+
 ### Added
 - **Item-level accessors on the top-level `ssevents` facade** so
   callers that decode an SSE stream can pattern-match (or filter)
