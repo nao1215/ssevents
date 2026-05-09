@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Documentation
+
+- README's `### Encode one event` quick-start now flags
+  `ssevents.retry/2`'s panic-on-negative behaviour and points at
+  `retry_clamp/2` for callers piping untrusted input. The same
+  callout cross-references `event_checked` / `id_checked` /
+  `named_checked` / `comment_checked` (added below) so consumers
+  know about the strict variants for the CR / LF / NUL strip
+  case as well. Closes the discoverability gap from #80 — the
+  panic was already documented in the function's docstring, but
+  a user dropping in `retry(req.body.user_provided_ms)` had to
+  go to source to find it. (#80)
+
 ### Added
 
 - **`ssevents/event`**: `event_checked` / `id_checked` /

@@ -54,6 +54,18 @@ pub fn encode_example() -> BitArray {
 }
 ```
 
+> **`retry/2` panics on negative input.** WHATWG SSE §9.2.6 only
+> recognises a non-negative reconnection time, so `ssevents.retry(_,
+> ms)` for `ms < 0` raises a structured panic rather than emit a
+> contract-violating wire. If the value comes from untrusted input
+> (a request field, a deserialised config, a CLI flag), reach for
+> `ssevents.retry_clamp/2` — it silently rounds negative values up
+> to `0` and is otherwise identical. Same posture applies if the
+> name / id / comment text comes from untrusted input: prefer the
+> `*_checked` variants (`event_checked`, `id_checked`,
+> `named_checked`, `comment_checked`) so CR / LF / NUL bytes
+> surface as `EventError` instead of being silently stripped.
+
 ### Encode a whole SSE response body
 
 ```gleam
