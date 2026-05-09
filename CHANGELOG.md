@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-05-10
+
 ### Documentation
 
 - README's `### Encode one event` quick-start now flags
