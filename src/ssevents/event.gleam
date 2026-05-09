@@ -60,6 +60,48 @@ pub fn comment_item(text: String) -> Item {
   CommentItem(comment(text))
 }
 
+/// Issue #77: Item-level accessors. The `Item` variants `EventItem` /
+/// `CommentItem` are not visible through the top-level `ssevents`
+/// module (a Gleam type alias does not re-export its constructors), so
+/// callers that decode an SSE stream and want to pattern-match on the
+/// result would otherwise need to reach into `ssevents/event` directly.
+/// These helpers let `ssevents`-only callers walk decoded items without
+/// the second import.
+/// `True` when the item is an event (carries an SSE `Event` payload).
+pub fn is_event(item: Item) -> Bool {
+  case item {
+    EventItem(_) -> True
+    CommentItem(_) -> False
+  }
+}
+
+/// `True` when the item is a `:`-prefixed comment line.
+pub fn is_comment(item: Item) -> Bool {
+  case item {
+    CommentItem(_) -> True
+    EventItem(_) -> False
+  }
+}
+
+/// Return the event payload when the item is an event, `None`
+/// otherwise. Use with `option.then` / `case` for stream processing
+/// that ignores comments.
+pub fn event_of_item(item: Item) -> Option(Event) {
+  case item {
+    EventItem(ev) -> Some(ev)
+    CommentItem(_) -> None
+  }
+}
+
+/// Return the comment text when the item is a comment, `None`
+/// otherwise. Mirrors `event_of_item/1` for the comment side.
+pub fn comment_text_of_item(item: Item) -> Option(String) {
+  case item {
+    CommentItem(c) -> Some(comment_text_of(c))
+    EventItem(_) -> None
+  }
+}
+
 pub fn new(data: String) -> Event {
   Event(event: None, data: sanitize_data_value(data), id: None, retry: None)
 }

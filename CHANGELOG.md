@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Item-level accessors on the top-level `ssevents` facade** so
+  callers that decode an SSE stream can pattern-match (or filter)
+  results without reaching into `ssevents/event` for the
+  `EventItem` / `CommentItem` constructors. Gleam's type aliases do
+  not re-export variant constructors, which forced every `decode`
+  caller to add a second `import ssevents/event.{...}`. The new
+  accessors solve this without breaking the type-alias re-export
+  contract:
+    - `ssevents.is_event(item)` / `ssevents.is_comment(item)` —
+      shape predicates.
+    - `ssevents.event_of_item(item) -> Option(Event)` — extract the
+      event payload, `None` for comments.
+    - `ssevents.comment_text_of_item(item) -> Option(String)` —
+      mirror for the comment side.
+    - `ssevents.events_of(items)` /
+      `ssevents.comment_texts_of(items)` — list-level filter helpers
+      for the common "I just want the events" pattern.
+  (#77)
+
 ## [0.9.0] - 2026-05-08
 
 ### Fixed
