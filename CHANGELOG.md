@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Property-based tests using
+  [metamon](https://github.com/nao1215/metamon) covering the
+  encoder → decoder round-trip and the `ssevents/event`
+  constructors / accessors. Lives in
+  `test/ssevents_metamon_test.gleam`. Highlights: `event.new` /
+  `named` / `id` / `data` / `retry_clamp` accessors round-trip;
+  `retry_clamp` rounds negative values up to zero and is the
+  identity on non-negative values; encode-then-decode preserves
+  data, name, id, and retry on a single event; `encode_items`
+  preserves item count through the round-trip; comments round-trip
+  through `is_comment`; `is_event` and `is_comment` are mutually
+  exclusive; encoded events end with the blank-line terminator
+  (`\n\n`); the encoded wire contains the literal `data: <body>`
+  field for non-empty data. The round-trip generators use
+  `no_edges` so the CR / LF strip behaviour stays out of the
+  unambiguous shape.
+
 ## [0.10.0] - 2026-05-09
 
 ### Added
