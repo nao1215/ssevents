@@ -1,6 +1,7 @@
 import gleam/option.{None, Some}
 import gleeunit/should
 import ssevents
+import ssevents/event
 
 pub fn event_builder_accessors_test() {
   let event =
@@ -337,4 +338,70 @@ pub fn issue_77_decode_and_inspect_first_event_test() {
     [first, ..] -> ssevents.name_of(first) |> should.equal(Some("job.update"))
     [] -> should.fail()
   }
+}
+
+// ---------- _checked variants (#81) ----------
+
+pub fn event_checked_accepts_safe_name_test() {
+  let assert Ok(evt) =
+    ssevents.new("data") |> ssevents.event_checked("job.update")
+  ssevents.name_of(evt) |> should.equal(Some("job.update"))
+}
+
+pub fn event_checked_rejects_lf_in_name_test() {
+  ssevents.new("data")
+  |> ssevents.event_checked("bad\nname")
+  |> should.equal(Error(event.NameContainsControlBytes(value: "bad\nname")))
+}
+
+pub fn event_checked_rejects_cr_in_name_test() {
+  ssevents.new("data")
+  |> ssevents.event_checked("bad\rname")
+  |> should.equal(Error(event.NameContainsControlBytes(value: "bad\rname")))
+}
+
+pub fn event_checked_rejects_nul_in_name_test() {
+  ssevents.new("data")
+  |> ssevents.event_checked("bad\u{0000}name")
+  |> should.equal(
+    Error(event.NameContainsControlBytes(value: "bad\u{0000}name")),
+  )
+}
+
+pub fn id_checked_accepts_safe_id_test() {
+  let assert Ok(evt) = ssevents.new("data") |> ssevents.id_checked("job-1")
+  ssevents.id_of(evt) |> should.equal(Some("job-1"))
+}
+
+pub fn id_checked_rejects_nul_in_id_test() {
+  // The repro from #81 — `id(_, "ab\u{0000}cd")` would silently
+  // produce an event with `id = "abcd"`, mutating the
+  // authorization-relevant identifier. The strict variant must
+  // refuse the input outright.
+  ssevents.new("data")
+  |> ssevents.id_checked("ab\u{0000}cd")
+  |> should.equal(Error(event.IdContainsControlBytes(value: "ab\u{0000}cd")))
+}
+
+pub fn named_checked_accepts_safe_inputs_test() {
+  let assert Ok(evt) = ssevents.named_checked("topic", "payload")
+  ssevents.name_of(evt) |> should.equal(Some("topic"))
+  ssevents.data_of(evt) |> should.equal("payload")
+}
+
+pub fn named_checked_rejects_lf_in_name_test() {
+  ssevents.named_checked("\n", "x")
+  |> should.equal(Error(event.NameContainsControlBytes(value: "\n")))
+}
+
+pub fn comment_checked_accepts_safe_text_test() {
+  let assert Ok(item) = ssevents.comment_checked("ping")
+  ssevents.is_comment(item) |> should.equal(True)
+}
+
+pub fn comment_checked_rejects_lf_in_text_test() {
+  ssevents.comment_checked("multi\nline")
+  |> should.equal(
+    Error(event.CommentContainsControlBytes(value: "multi\nline")),
+  )
 }
