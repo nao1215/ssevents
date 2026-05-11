@@ -150,6 +150,25 @@ pub fn from_parts(
   id id: Option(String),
   retry retry: Option(Int),
 ) -> Event {
+  // Issue #89: align with the `retry/2` setter. A negative `retry`
+  // value is a programmer error — the SSE spec mandates a
+  // non-negative reconnection time. Pre-fix `sanitize_retry`
+  // silently dropped it to `None`, which left callers with no
+  // signal that their input was rejected. Now we panic on the
+  // negative case (matching `retry/2`); values above
+  // `default_max_retry_value` still drop to `None` so the
+  // `decode(encode(_))` round-trip property holds — that branch is
+  // documented on `retry/2` and is consistent across all three
+  // setters.
+  case retry {
+    Some(ms) if ms < 0 ->
+      panic as {
+        "ssevents.from_parts: retry milliseconds must be >= 0 (got "
+        <> int.to_string(ms)
+        <> "); the SSE spec mandates a non-negative reconnection time. Use retry_clamp via the builder if a lenient posture is wanted."
+      }
+    _ -> Nil
+  }
   Event(
     event: option_sanitize(event_name),
     data: sanitize_data_value(data),

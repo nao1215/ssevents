@@ -72,10 +72,13 @@ pub fn decode_final_unterminated_event_is_dispatched_test() {
   ssevents.data_of(event) |> should.equal("tail")
 }
 
-pub fn decode_retry_only_event_is_preserved_test() {
-  let assert Ok([EventItem(event)]) = ssevents.decode("retry: 1500\n\n")
-  ssevents.data_of(event) |> should.equal("")
-  ssevents.retry_of(event) |> should.equal(Some(1500))
+pub fn decode_retry_only_block_does_not_dispatch_test() {
+  // Pre-#87 this pinned retry-only blocks as dispatching an EventItem
+  // with the retry value attached. WHATWG HTML §9.2.6 step 4 says the
+  // data buffer is what gates dispatch: a retry-only block mutates the
+  // user agent's reconnection-time state but does NOT dispatch. The
+  // decoder now mirrors the spec and emits an empty list.
+  ssevents.decode("retry: 1500\n\n") |> should.equal(Ok([]))
 }
 
 pub fn decode_empty_data_event_test() {
@@ -443,8 +446,13 @@ pub fn decode_preserves_combining_mark_after_leading_space_test() {
 }
 
 pub fn decode_preserves_combining_acute_after_leading_space_test() {
-  // Same defect class with U+0301 COMBINING ACUTE ACCENT.
-  let wire = "event: \u{0301}E\n\n"
+  // Same defect class with U+0301 COMBINING ACUTE ACCENT. Pre-#87 the
+  // wire could omit a `data:` line because the decoder emitted an
+  // EventItem whenever any state field was set; post-#87 the WHATWG
+  // dispatch rule requires a non-empty data buffer, so the test adds
+  // a trailing `data: x` to keep the combining-mark assertion
+  // reachable.
+  let wire = "event: \u{0301}E\ndata: x\n\n"
   let assert Ok([EventItem(decoded)]) = ssevents.decode(wire)
   ssevents.name_of(decoded) |> should.equal(Some("\u{0301}E"))
 }

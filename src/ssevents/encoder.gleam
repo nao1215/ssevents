@@ -91,13 +91,56 @@ fn event_lines(ev: event.Event) -> List(String) {
     |> prepend_optional_int("retry", event.retry_of(ev))
     |> list.reverse
 
+  // Issue #88: the default decoder rejects lines > 8192 bytes
+  // (`LineTooLong(8192)`), so a verbatim `data:` line longer than
+  // ~8184 bytes makes `decode(encode(e))` fail outright. The encoder
+  // caps each emitted `data:` line at 2000 codepoints (worst-case
+  // 8000 bytes for 4-byte UTF-8, comfortably under the limit even
+  // after the `data: ` prefix and trailing newline). The WHATWG
+  // dispatch rule joins multiple `data:` lines with LF, so this
+  // trades byte-perfect round-trip for parseability: the decoded
+  // value gets `\n` inserted at chunk boundaries. JSON/base64
+  // payloads (the common SSE shapes for >8KB content) tolerate this;
+  // callers needing byte-identical fidelity should base64-encode.
   let data_lines =
     event.data_of(ev)
     |> normalise_newlines
     |> string.split(on: "\n")
+    |> list.flat_map(chunk_data_line)
     |> list.map(fn(line) { prefixed_line("data", line) })
 
   list.append(prefix_lines, data_lines)
+}
+
+// 2000 codepoints worst-case ≈ 8000 bytes (UTF-8 max 4 B/cp), leaving
+// margin under the decoder's 8192-byte line limit even after the
+// `data: ` prefix and trailing `\n`. For pure ASCII this means
+// `data:` lines top out around 2000 chars rather than the maximum 8185
+// the wire allows; round-trip correctness wins over wire density here.
+const max_data_line_codepoints = 2000
+
+fn chunk_data_line(line: String) -> List(String) {
+  case string.byte_size(line) <= max_data_line_codepoints * 4 {
+    True -> [line]
+    False -> chunk_data_line_loop(line, [])
+  }
+}
+
+fn chunk_data_line_loop(remaining: String, acc: List(String)) -> List(String) {
+  case string.length(remaining) <= max_data_line_codepoints {
+    True -> list.reverse([remaining, ..acc])
+    False -> {
+      let head =
+        string.slice(remaining, at_index: 0, length: max_data_line_codepoints)
+      let rest =
+        string.slice(
+          remaining,
+          at_index: max_data_line_codepoints,
+          length: string.length(remaining) - max_data_line_codepoints,
+        )
+      chunk_data_line_loop(rest, [head, ..acc])
+    }
+  }
 }
 
 fn prepend_optional(

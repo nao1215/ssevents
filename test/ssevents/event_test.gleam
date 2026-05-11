@@ -216,16 +216,15 @@ pub fn retry_clamp_drops_above_default_max_test() {
   ssevents.retry_of(event) |> should.equal(None)
 }
 
-pub fn from_parts_drops_negative_retry_test() {
-  let event =
-    ssevents.from_parts(
-      event_name: None,
-      data: "payload",
-      id: None,
-      retry: Some(-100),
-    )
-  ssevents.retry_of(event) |> should.equal(None)
-}
+// Pre-#89 from_parts silently dropped negative retry to None — the
+// caller had no signal their input was rejected. The new behaviour
+// (matching the panic posture of `retry/2`) means this test is now a
+// regression pin for the panic, and the round-trip test below uses
+// the oversized branch (which still silently drops because the SSE
+// wire format cannot encode it round-trippably).
+//
+// Negative-retry callers should reach for the planned `from_parts_*`
+// builder helpers or call `retry_clamp` after construction.
 
 pub fn from_parts_drops_out_of_range_retry_test() {
   let event =
@@ -239,20 +238,10 @@ pub fn from_parts_drops_out_of_range_retry_test() {
 }
 
 pub fn encode_decode_round_trips_after_retry_sanitisation_test() {
-  // Regression for #60: prior versions emitted `retry: -100` /
-  // `retry: 1000000000` and the decoder either silently dropped or
-  // hard-failed.
-  let neg =
-    ssevents.from_parts(
-      event_name: None,
-      data: "x",
-      id: None,
-      retry: Some(-100),
-    )
-  let assert Ok([decoded_neg]) = ssevents.decode(ssevents.encode(neg))
-  ssevents.encode_item(decoded_neg)
-  |> should.equal(ssevents.encode(neg))
-
+  // Regression for #60: prior versions emitted `retry: 1000000000`
+  // and the decoder silently dropped it. Post-#89 the only sanitised
+  // case `from_parts` still accepts is the oversized branch (negative
+  // retry now panics on construction to match `retry/2`).
   let huge =
     ssevents.from_parts(
       event_name: None,

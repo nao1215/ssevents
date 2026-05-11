@@ -1,6 +1,7 @@
 import gleam/bit_array
 import gleam/list
 import gleam/option.{Some}
+import gleam/string
 import gleeunit/should
 import ssevents
 import ssevents/encoder
@@ -170,6 +171,27 @@ pub fn encode_comment_round_trips_to_single_comment_test() {
   let assert Ok(decoded) = ssevents.decode(wire)
   decoded
   |> should.equal([event.CommentItem(event.comment("multilinediagnostic"))])
+}
+
+pub fn encode_splits_oversized_data_line_for_decoder_limit_test() {
+  // Regression for #88: prior versions wrote `data:` values verbatim,
+  // so a payload longer than ~8184 bytes produced wire bytes the
+  // default decoder rejected with `LineTooLong(8192)`. The encoder
+  // now caps each `data:` line at 2000 codepoints, keeping every
+  // emitted line under the decoder limit at the cost of inserting
+  // `\n` boundaries at chunk joins (the WHATWG dispatch rule joins
+  // multiple `data:` lines with LF). The round-trip therefore
+  // *parses* on the receive side rather than failing outright; the
+  // decoded value differs from the input by the inserted boundaries,
+  // and callers that need byte-identical fidelity should base64-
+  // encode payloads above this threshold.
+  let payload = string.repeat("x", 10_000)
+  let ev = ssevents.new(payload)
+  let wire = ssevents.encode(ev)
+  let assert Ok([event.EventItem(decoded)]) = ssevents.decode(wire)
+  // 10_000 / 2_000 = 5 chunks → 4 inserted boundaries → length grows
+  // by 4 LF characters.
+  string.length(event.data_of(decoded)) |> should.equal(10_004)
 }
 
 fn contains_byte(input: BitArray, target: Int) -> Bool {
