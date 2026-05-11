@@ -404,16 +404,14 @@ fn reset_event_state(state: DecodeState) -> DecodeState {
 }
 
 fn has_meaningful_event_content(state: DecodeState) -> Bool {
-  case state.data_line_count > 0 {
-    True -> True
-    False ->
-      case state.event_name, state.id, state.retry {
-        Some(_), _, _ -> True
-        _, Some(_), _ -> True
-        _, _, Some(_) -> True
-        None, None, None -> False
-      }
-  }
+  // WHATWG HTML §9.2.6 step 4: "If the data buffer is an empty string,
+  // then set the data buffer and the event type buffer to the empty
+  // string and return." Dispatch is keyed off the data buffer alone;
+  // an `event:`/`id:`/`retry:`-only block mutates state-buffer fields
+  // (lastEventId, reconnection time, event type buffer) without
+  // dispatching. Pre-fix this returned True whenever any state field
+  // was set, which surfaced spurious EventItems. (#87)
+  state.data_line_count > 0
 }
 
 fn split_field(line: String) -> Result(#(String, String), SseError) {

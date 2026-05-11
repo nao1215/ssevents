@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ssevents/decoder`**: a block containing only a `retry:` field no
+  longer dispatches a phantom event. Per WHATWG §9.2.6 a dispatched
+  `MessageEvent` requires at least one `data:` line in the block —
+  earlier versions treated `id` / `event` / `retry` as enough to
+  trigger dispatch, producing an empty `data:""` event the wire never
+  promised. Fields outside dispatch (notably `retry:` updates) are
+  still applied to the connection's reconnect time. (#87)
+- **`ssevents/encoder`**: `data` values longer than ~8184 bytes on a
+  single line previously emitted a `data: …` line the default
+  decoder rejected with `LineTooLong(8192)`, breaking
+  `decode(encode(e))`. Long values are now chunked into multiple
+  `data:` lines (≤ 2000 codepoints each), trading byte-perfect
+  round-trip for parseability — the WHATWG dispatch rule joins
+  `data:` lines with LF, so callers needing byte-identical fidelity
+  should base64-encode payloads above this threshold. (#88)
+- **`ssevents/event`**: `from_parts` now panics on a negative `retry`
+  the same way `retry/2` does, instead of silently dropping the
+  value. The previous silent-drop posture was inconsistent with the
+  setter and gave callers no signal that their input was rejected.
+  Callers handling untrusted reconnect times should pre-clamp via
+  `retry_clamp/2` or use the planned `from_parts_*` checked builders.
+  (#89)
+
 ## [0.11.0] - 2026-05-10
 
 ### Documentation
