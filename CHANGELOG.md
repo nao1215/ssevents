@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-05-11
+
 ### Fixed
 
 - **`ssevents/decoder`**: a block containing only a `retry:` field no
