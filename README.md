@@ -60,7 +60,12 @@ pub fn encode_example() -> BitArray {
 > contract-violating wire. If the value comes from untrusted input
 > (a request field, a deserialised config, a CLI flag), reach for
 > `ssevents.retry_clamp/2` — it silently rounds negative values up
-> to `0` and is otherwise identical. Same posture applies if the
+> to `0` *and silently drops values above the 24 h cap
+> (`limit.default_max_retry_value`) to `None`*, so callers forwarding
+> truly noisy input must accept that out-of-range values vanish from
+> the wire rather than produce a `retry:` line. The drop matches
+> `retry/2`'s and `from_parts/4`'s behaviour at that boundary so the
+> default decoder round-trips. Same posture applies if the
 > name / id / comment text comes from untrusted input: prefer the
 > `*_checked` variants (`event_checked`, `id_checked`,
 > `named_checked`, `comment_checked`) so CR / LF / NUL bytes

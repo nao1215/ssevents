@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Documentation
+
+- README's `retry_clamp/2` paragraph now states both silent transformations: negative values are rounded up to `0`, **and** values above the 24 h cap (`limit.default_max_retry_value`) are silently dropped to `None`. The function docstring already documented the upper-bound drop; the README only mentioned the negative-side clamp, so a caller reading just the README who forwarded truly noisy input would silently emit events without any `retry:` line on the wire. (#92)
+
 ## [0.12.0] - 2026-05-11
 
 ### Fixed
