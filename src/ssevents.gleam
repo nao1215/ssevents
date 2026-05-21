@@ -371,6 +371,37 @@ pub fn max_event_bytes(limits: Limits) -> Int {
   limit.max_event_bytes(limits)
 }
 
+/// Alias of `max_event_bytes/1`. Pairs with `with_max_event_size/2`
+/// so callers that raise the per-event cap can read it back using the
+/// same spelling. (#96)
+pub fn max_event_size(limits: Limits) -> Int {
+  limit.max_event_size(limits)
+}
+
+/// Override the per-event byte cap on a `Limits` value.
+///
+/// The default decoder (`decode/1`, `decode_bytes/1`) runs with a
+/// 65_536-byte cap and fails the whole stream with
+/// `Error(EventTooLarge(65_536))` for any event above that. The
+/// encoder never rejects an event for sheer size, so a 100 KB event
+/// the package's own encoder produced would be unreachable on the
+/// decode side without this override. Pair with `decode_with_limits`
+/// (or `decode_bytes_with_limits`) to raise the cap:
+///
+/// ```gleam
+/// let limits =
+///   ssevents.default_limits()
+///   |> ssevents.with_max_event_size(200_000)
+/// ssevents.decode_with_limits(wire, limits: limits)
+/// ```
+///
+/// The default `decode/1` keeps the 65_536-byte ceiling as a
+/// memory-bound safety net for untrusted input. Panics on
+/// `bytes < 1`. (#96)
+pub fn with_max_event_size(limits: Limits, bytes: Int) -> Limits {
+  limit.with_max_event_size(limits, bytes)
+}
+
 pub fn max_data_lines(limits: Limits) -> Int {
   limit.max_data_lines(limits)
 }

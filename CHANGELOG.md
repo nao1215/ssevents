@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - **`ssevents` / `ssevents/limit`**: `with_strict_retry_cap/2` and `strict_retry_cap/1`. Opt back into the pre-0.14 strict posture where `retry:` values above `max_retry_value` fail the whole decode. The default stays lenient. (#95)
+- **`ssevents` / `ssevents/limit`**: `with_max_event_size/2` and `max_event_size/1`. Raise the decoder's per-event byte cap so caller-trusted oversize events round-trip through `decode_with_limits` instead of failing the whole stream with `Error(EventTooLarge(65_536))`; the default `decode/1` keeps the 65_536-byte safety net. (#96)
 
 ## [0.13.0] - 2026-05-18
 
