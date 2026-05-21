@@ -127,6 +127,45 @@ pub fn with_strict_retry_cap(limits: Limits, strict: Bool) -> Limits {
   Limits(..limits, strict_retry_cap: strict)
 }
 
+/// Alias of `max_event_bytes/1`. Reads the per-event byte cap the
+/// decoder uses to reject oversize events with
+/// `Error(EventTooLarge(_))`. Provided so callers can stay in the
+/// `with_max_event_size` / `max_event_size` spelling pair when
+/// raising the limit explicitly. (#96)
+pub fn max_event_size(limits: Limits) -> Int {
+  max_event_bytes(limits)
+}
+
+/// Override the per-event byte cap on a `Limits` value.
+///
+/// `ssevents.decode/1` runs with `default_max_event_bytes` (65_536) and
+/// fails the whole stream with `Error(EventTooLarge(65_536))` for any
+/// event above that cap — symmetric with `max_line_bytes` /
+/// `max_data_lines`, but asymmetric with the encoder side which never
+/// rejects an event for sheer size. A caller that knowingly emits a
+/// 100 KB event and pipes it back through the decoder needs to raise
+/// the cap explicitly:
+///
+/// ```gleam
+/// let limits =
+///   ssevents.default_limits()
+///   |> ssevents.with_max_event_size(200_000)
+/// ssevents.decode_with_limits(wire, limits: limits)
+/// ```
+///
+/// The default `decode/1` deliberately keeps the 65_536-byte ceiling
+/// as a memory-bound safety net for untrusted input; reach for
+/// `decode_with_limits` + `with_max_event_size` when the input is
+/// trusted and known to be larger. Panics on `bytes < 1` to mirror
+/// `new/4`'s posture. (#96)
+pub fn with_max_event_size(limits: Limits, bytes: Int) -> Limits {
+  case bytes < 1 {
+    True -> panic as "max_event_size must be >= 1"
+    False -> Nil
+  }
+  Limits(..limits, max_event_bytes: bytes)
+}
+
 /// Like `new`, but returns the argument-validation failure as a
 /// `Result` instead of panicking. Use this when limit values come
 /// from configuration, environment variables, or other dynamic

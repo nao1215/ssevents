@@ -43,10 +43,25 @@ pub opaque type DecodeState {
   )
 }
 
+/// Decode a full SSE wire-format `String` into the list of `Item`s it
+/// represents.
+///
+/// Runs with `limit.default()`, whose per-event cap is
+/// `default_max_event_bytes` (65_536 bytes). Any single event larger
+/// than that fails the whole decode with `Error(EventTooLarge(65_536))`
+/// — note this is asymmetric with the encoder, which never rejects an
+/// event for sheer size. Callers that knowingly round-trip events
+/// above 65_536 bytes (e.g. 100 KB JSON payloads emitted by their own
+/// encoder) must raise the cap via
+/// `decode_with_limits(wire, limit.default()
+/// |> limit.with_max_event_size(200_000))`. (#96)
 pub fn decode(input: String) -> Result(List(event.Item), SseError) {
   decode_with_limits(input, limits: limit.default())
 }
 
+/// `BitArray` counterpart of `decode/1`. Same default per-event cap of
+/// 65_536 bytes; reach for `decode_bytes_with_limits` with
+/// `limit.with_max_event_size/2` to raise it. (#96)
 pub fn decode_bytes(input: BitArray) -> Result(List(event.Item), SseError) {
   decode_bytes_with_limits(input, limits: limit.default())
 }
