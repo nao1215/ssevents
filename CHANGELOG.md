@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-05-21
+
 ### Changed
 
 - **Breaking — `ssevents/decoder`**: `retry:` values whose integer form exceeds `limit.default_max_retry_value` (24 h in ms) no longer fail the whole stream with `Error(InvalidRetry(_))`. The decoder now silently drops the offending field to `None` and the surrounding event still dispatches — symmetric with the encoder's `retry_clamp/2` and matching WHATWG SSE's lenient parser thesis. A single hostile `retry: 99999999999999` can no longer knock out the rest of the stream. Callers that need to detect such overruns explicitly can opt back into the strict posture via `ssevents.with_strict_retry_cap(limits, True)`. (#95)
