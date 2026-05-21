@@ -340,12 +340,17 @@ pub fn decode_retry_within_limit_still_set_test() {
   ssevents.retry_of(event) |> should.equal(Some(1500))
 }
 
-pub fn decode_retry_above_limit_still_errors_test() {
+pub fn decode_retry_above_limit_under_strict_mode_errors_test() {
   // The `max_retry_value` safety bound is a per-decoder limit, not a
-  // spec rule. Above-limit values stay an `InvalidRetry` error so
-  // callers can detect adversarial input. The default limit is
-  // 86_400_000 ms (one day); 99_999_999_999 is well above.
-  ssevents.decode_bytes(<<"retry: 99999999999\ndata: ping\n\n":utf8>>)
+  // spec rule. Under `with_strict_retry_cap(_, True)` an above-limit
+  // value still surfaces as `InvalidRetry(_)` so callers that need
+  // to detect adversarial input can opt in. The default limit is
+  // 86_400_000 ms (one day); 99_999_999_999 is well above. (#95)
+  let limits = ssevents.default_limits() |> ssevents.with_strict_retry_cap(True)
+  ssevents.decode_bytes_with_limits(
+    <<"retry: 99999999999\ndata: ping\n\n":utf8>>,
+    limits: limits,
+  )
   |> should.equal(Error(InvalidRetry("99999999999")))
 }
 
