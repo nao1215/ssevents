@@ -5,8 +5,11 @@
 //// - unknown fields are ignored
 //// - EOF dispatches the final unterminated event or trailing comment
 //// - the first decode error fails the whole operation
-//// - retry values must be ASCII digits and must not exceed
-////   `Limits.max_retry_value`
+//// - retry values must be ASCII digits; values above
+////   `Limits.max_retry_value` are silently dropped to `None`
+////   (symmetric with `event.retry_clamp/2`) unless
+////   `Limits.strict_retry_cap` is set, in which case they fail with
+////   `InvalidRetry(_)` (#95)
 
 import gleam/bit_array
 import gleam/int
@@ -289,18 +292,17 @@ fn apply_field_parts(
           // field silently when the value isn't all ASCII digits
           // (negative `-100`, decimal `12.5`, empty, etc.). Values
           // that *are* all digits but exceed `max_retry_value` are
-          // still surfaced as `Error(InvalidRetry(_))` because that
-          // limit is a per-decoder safety bound, not a spec rule.
+          // also silently dropped to `None` by default — this matches
+          // the encoder's `retry_clamp/2` posture so the
+          // `decode(encode(_))` round-trip survives the cap, and
+          // prevents a single adversarial `retry: 99999999999` from
+          // failing the whole stream. Callers that need to detect
+          // such overruns explicitly can opt in via
+          // `limit.with_strict_retry_cap(_, True)`. (#95)
           case is_ascii_digit_string(value) {
             False ->
               Ok(#(DecodeState(..state, event_bytes: next_event_bytes), []))
-            True ->
-              apply_validated_field(
-                state,
-                parse_retry(value, state.limits),
-                next_event_bytes,
-                fn(s, v) { DecodeState(..s, retry: Some(v)) },
-              )
+            True -> apply_retry_field(state, value, next_event_bytes)
           }
         _ -> Ok(#(DecodeState(..state, event_bytes: next_event_bytes), []))
       }
@@ -473,17 +475,51 @@ fn decode_comment_text(value: String) -> String {
   trim_optional_leading_space(value)
 }
 
-fn parse_retry(value: String, limits: limit.Limits) -> Result(Int, SseError) {
-  case is_ascii_digit_string(value) {
-    False -> Error(InvalidRetry(value))
-    True ->
-      case int.parse(value) {
-        Error(_) -> Error(InvalidRetry(value))
-        Ok(parsed) ->
-          case parsed > limit.max_retry_value(limits) {
+/// Apply a `retry:` field whose value is already known to be an
+/// all-ASCII-digit string (the digits-only filter ran in the caller).
+///
+/// The branch table here is the heart of the lenient-by-default
+/// retry-cap behaviour pinned in #95:
+/// - parse failure on an all-digit value would only happen for an
+///   integer literal that overflows the platform `Int`. Treat it the
+///   same as a cap overrun (silent drop, or `InvalidRetry` under
+///   strict mode) so the surrounding event still dispatches.
+/// - all-digit values that are within the cap are accepted as-is.
+/// - all-digit values above `max_retry_value` are silently dropped to
+///   `None` by default (symmetric with `event.retry_clamp/2`), and
+///   surface as `InvalidRetry(_)` only when
+///   `limit.strict_retry_cap(limits)` is `True`.
+fn apply_retry_field(
+  state: DecodeState,
+  value: String,
+  next_event_bytes: Int,
+) -> Result(#(DecodeState, List(event.Item)), SseError) {
+  let dropped = #(DecodeState(..state, event_bytes: next_event_bytes), [])
+  let strict = limit.strict_retry_cap(state.limits)
+  case int.parse(value) {
+    Error(_) ->
+      case strict {
+        True -> Error(InvalidRetry(value))
+        False -> Ok(dropped)
+      }
+    Ok(parsed) ->
+      case parsed > limit.max_retry_value(state.limits) {
+        True ->
+          case strict {
             True -> Error(InvalidRetry(value))
-            False -> Ok(parsed)
+            False -> Ok(dropped)
           }
+        False ->
+          Ok(
+            #(
+              DecodeState(
+                ..state,
+                event_bytes: next_event_bytes,
+                retry: Some(parsed),
+              ),
+              [],
+            ),
+          )
       }
   }
 }

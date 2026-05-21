@@ -16,6 +16,13 @@ pub opaque type Limits {
     max_event_bytes: Int,
     max_data_lines: Int,
     max_retry_value: Int,
+    /// When `True`, the decoder surfaces `Error(InvalidRetry(_))` for
+    /// `retry:` values whose integer form is above `max_retry_value`.
+    /// When `False` (the default), the decoder silently drops the
+    /// offending `retry:` field to `None` and the surrounding event
+    /// still dispatches — mirroring the encoder's `retry_clamp/2`
+    /// posture and WHATWG SSE's "lenient parser" thesis (#95).
+    strict_retry_cap: Bool,
   )
 }
 
@@ -42,6 +49,7 @@ pub fn default() -> Limits {
     max_event_bytes: default_max_event_bytes,
     max_data_lines: default_max_data_lines,
     max_retry_value: default_max_retry_value,
+    strict_retry_cap: False,
   )
 }
 
@@ -72,6 +80,7 @@ pub fn new(
     max_event_bytes: max_event_bytes,
     max_data_lines: max_data_lines,
     max_retry_value: max_retry_value,
+    strict_retry_cap: False,
   )
 }
 
@@ -93,6 +102,29 @@ pub fn max_data_lines(limits: Limits) -> Int {
 pub fn max_retry_value(limits: Limits) -> Int {
   let Limits(max_retry_value:, ..) = limits
   max_retry_value
+}
+
+/// Read the `strict_retry_cap` flag from a `Limits` value.
+///
+/// When `True`, the decoder errors with `InvalidRetry(_)` on `retry:`
+/// values above `max_retry_value`; when `False` (the default), it
+/// silently drops the offending field to `None` and the surrounding
+/// event still dispatches. See `with_strict_retry_cap/2`. (#95)
+pub fn strict_retry_cap(limits: Limits) -> Bool {
+  let Limits(strict_retry_cap:, ..) = limits
+  strict_retry_cap
+}
+
+/// Toggle the decoder's `retry:` cap-overrun posture.
+///
+/// Defaults to `False` (lenient): a `retry:` value whose integer form
+/// exceeds `max_retry_value` is silently dropped to `None` so the
+/// surrounding event still dispatches, mirroring the encoder's
+/// `retry_clamp/2` and matching WHATWG SSE's lenient parser thesis.
+/// Opt into `True` when downstream code needs to detect adversarial
+/// retry values explicitly. (#95)
+pub fn with_strict_retry_cap(limits: Limits, strict: Bool) -> Limits {
+  Limits(..limits, strict_retry_cap: strict)
 }
 
 /// Like `new`, but returns the argument-validation failure as a
@@ -118,6 +150,7 @@ pub fn new_checked(
     max_event_bytes: max_event_bytes,
     max_data_lines: max_data_lines,
     max_retry_value: max_retry_value,
+    strict_retry_cap: False,
   ))
 }
 

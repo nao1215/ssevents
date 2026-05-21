@@ -379,6 +379,30 @@ pub fn max_retry_value(limits: Limits) -> Int {
   limit.max_retry_value(limits)
 }
 
+/// Read the `strict_retry_cap` flag from a `Limits` value.
+///
+/// When `True`, the decoder errors with `InvalidRetry(_)` on
+/// `retry:` values above `max_retry_value`. When `False` (the
+/// default), the decoder silently drops the offending field to
+/// `None` and the surrounding event still dispatches. (#95)
+pub fn strict_retry_cap(limits: Limits) -> Bool {
+  limit.strict_retry_cap(limits)
+}
+
+/// Toggle the decoder's `retry:` cap-overrun posture.
+///
+/// `False` (the default) keeps the decoder lenient: a `retry:` value
+/// above `max_retry_value` is silently dropped to `None` and the
+/// surrounding event still dispatches, mirroring the encoder's
+/// `retry_clamp/2` and matching WHATWG SSE's lenient parser thesis.
+/// `True` re-enables the strict posture: an above-cap value fails
+/// the whole decode with `Error(InvalidRetry(_))`, so callers that
+/// want to detect adversarial retry values explicitly can do so.
+/// (#95)
+pub fn with_strict_retry_cap(limits: Limits, strict: Bool) -> Limits {
+  limit.with_strict_retry_cap(limits, strict)
+}
+
 pub fn validate_event_name(name: String) -> Result(String, SseError) {
   validate.validate_event_name(name)
 }
