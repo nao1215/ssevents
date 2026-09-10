@@ -286,7 +286,10 @@ pub fn encode_items_bytes(items: List(Item)) -> BitArray {
   encoder.encode_items_bytes(items)
 }
 
-pub fn encode_with_line_ending(event: Event, line_ending: LineEnding) -> String {
+pub fn encode_with_line_ending(
+  event: Event,
+  line_ending: LineEnding,
+) -> String {
   encoder.encode_with_line_ending(event, line_ending)
 }
 
@@ -466,7 +469,9 @@ pub fn retry_interval(state: ReconnectState) -> Option(Int) {
   reconnect.retry(state)
 }
 
-pub fn last_event_id_header(state: ReconnectState) -> Option(#(String, String)) {
+pub fn last_event_id_header(
+  state: ReconnectState,
+) -> Option(#(String, String)) {
   reconnect.last_event_id_header(state)
 }
 
