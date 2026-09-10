@@ -102,9 +102,10 @@ fn event_lines(ev: event.Event) -> List(String) {
   // value gets `\n` inserted at chunk boundaries. JSON/base64
   // payloads (the common SSE shapes for >8KB content) tolerate this;
   // callers needing byte-identical fidelity should base64-encode.
+  // `event` rewrites CR and CRLF in `data` to LF at construction, so
+  // splitting on LF alone covers every line terminator.
   let data_lines =
     event.data_of(ev)
-    |> normalise_newlines
     |> string.split(on: "\n")
     |> list.flat_map(chunk_data_line)
     |> list.map(fn(line) { prefixed_line("data", line) })
@@ -194,35 +195,5 @@ fn line_ending_to_string(line_ending: LineEnding) -> String {
   case line_ending {
     Lf -> "\n"
     Crlf -> "\r\n"
-  }
-}
-
-fn normalise_newlines(text: String) -> String {
-  // Walk the bytes once and rewrite every CRLF / lone CR to LF in a
-  // single pass. The two-pass `string.replace` shape this replaced
-  // could leave a stray CR behind on the BEAM for inputs like
-  // `"a\n\r\r\n"` — the first pass consumes the trailing `\r\n`,
-  // and the lone `\r` survives the second pass because of how
-  // `:binary.replace` handles the surrounding LF context. (#58)
-  //
-  // The walker only substitutes individual ASCII bytes, so a valid
-  // UTF-8 input remains valid UTF-8 — `let assert` here is a
-  // total-function declaration, not error swallowing.
-  // nolint: assert_ok_pattern -- ASCII-only byte substitution preserves UTF-8 validity
-  let assert Ok(s) =
-    text
-    |> bit_array.from_string
-    |> walk_normalise_newlines(<<>>)
-    |> bit_array.to_string
-  s
-}
-
-fn walk_normalise_newlines(input: BitArray, acc: BitArray) -> BitArray {
-  case input {
-    <<>> -> acc
-    <<13, 10, rest:bytes>> -> walk_normalise_newlines(rest, <<acc:bits, 10>>)
-    <<13, rest:bytes>> -> walk_normalise_newlines(rest, <<acc:bits, 10>>)
-    <<byte, rest:bytes>> -> walk_normalise_newlines(rest, <<acc:bits, byte>>)
-    _ -> acc
   }
 }

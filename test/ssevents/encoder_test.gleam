@@ -105,10 +105,10 @@ pub fn encode_items_bytes_matches_item_concatenation_test() {
 }
 
 pub fn encode_normalises_lone_cr_between_lf_pair_test() {
-  // Regression for #58: input " 0Az~\n\r\r\n" used to leak a lone CR
-  // into the wire. As of #67, `event.new` strips CR at construction
-  // so the encoder never sees a CR byte to begin with, and the
-  // round-trip is closed at construction rather than at encode.
+  // Input " 0Az~\n\r\r\n" used to leak a lone CR into the wire.
+  // `event.new` now rewrites every CR to LF at construction, so the
+  // encoder never sees a CR byte and the round trip is closed at
+  // construction rather than at encode.
   let event = ssevents.new(" 0Az~\n\r\r\n")
   let wire = ssevents.encode(event)
 
@@ -118,22 +118,66 @@ pub fn encode_normalises_lone_cr_between_lf_pair_test() {
   |> should.equal(False)
 
   // The data field must round-trip through encode/decode losslessly.
-  // CR is dropped at construction; the surviving LF preserves the
-  // logical-newline semantics of the original input.
+  // Each CR became LF at construction, so every line break of the
+  // original input survives.
   let assert Ok([decoded_item]) = ssevents.decode(wire)
   let assert event.EventItem(decoded_event) = decoded_item
   ssevents.data_of(decoded_event)
   |> should.equal(ssevents.data_of(event))
 }
 
-pub fn encode_normalises_isolated_cr_test() {
-  // A lone CR with no trailing LF must also normalise to LF.
-  let event = ssevents.new("a\rb")
-  let wire = ssevents.encode(event)
+pub fn encode_decode_round_trips_data_to_its_lf_form_test() {
+  // WHATWG SSE treats CR, LF and CRLF alike as line terminators, so the
+  // only change a round trip may make to `data` is rewriting each of
+  // them to LF. Lone CRs used to be dropped and a trailing CR lost its
+  // line, so the decoded data came back shorter than the input.
+  [
+    " 0Az~\n\r\r\n", "\n", "\n\n", "\n\n\n", "abc", "abc\n", "abc\n\n",
+    "a\nb\nc", "a\r\nb\r\nc", "a\rb\rc", "with\rcr",
+    "all\nmixed\r\nthings\rhere", "abc\r", "\r", "\r\r\r", "\r\n", "\r\r\n",
+    "\n\r", "leading\rstart", "",
+  ]
+  |> list.each(fn(input) {
+    let wire = ssevents.encode(ssevents.new(input))
+    let assert Ok([event.EventItem(decoded)]) = ssevents.decode(wire)
+    ssevents.data_of(decoded) |> should.equal(to_lf(input))
+  })
+}
 
-  bit_array.from_string(wire)
-  |> contains_byte(13)
-  |> should.equal(False)
+/// CRLF and lone CR to LF, by code point. `string.replace` cannot be
+/// the oracle here: it works on graphemes on Erlang and on code units on
+/// JavaScript, and rewriting `"\r\r\n"` in two passes forms a new CRLF.
+fn to_lf(text: String) -> String {
+  text
+  |> string.to_utf_codepoints
+  |> list.map(string.utf_codepoint_to_int)
+  |> lf_codepoints([])
+}
+
+fn lf_codepoints(codes: List(Int), acc: List(Int)) -> String {
+  case codes {
+    [] ->
+      acc
+      |> list.reverse
+      |> list.filter_map(string.utf_codepoint)
+      |> string.from_utf_codepoints
+    [13, 10, ..rest] | [13, ..rest] -> lf_codepoints(rest, [10, ..acc])
+    [code, ..rest] -> lf_codepoints(rest, [code, ..acc])
+  }
+}
+
+pub fn encode_normalises_isolated_cr_test() {
+  // A lone CR with no trailing LF becomes a line break, not nothing.
+  ssevents.encode(ssevents.new("a\rb"))
+  |> should.equal("data: a\ndata: b\n\n")
+}
+
+pub fn encode_keeps_leading_byte_order_mark_in_data_test() {
+  // U+FEFF is ordinary text inside a `data` value. Only a BOM at the
+  // very start of the stream is special to SSE decoders, and a `data:`
+  // line never starts the stream with it. Both targets must emit it.
+  ssevents.encode(ssevents.new("\u{FEFF}x"))
+  |> should.equal("data: \u{FEFF}x\n\n")
 }
 
 pub fn encode_comment_strips_lf_to_keep_round_trip_test() {

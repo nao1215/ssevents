@@ -115,6 +115,50 @@ pub fn encode_then_decode_preserves_data_test() -> Nil {
   })
 }
 
+pub fn encode_then_decode_rewrites_only_line_terminators_test() -> Nil {
+  // Data made of text and every SSE line terminator (CR, LF, CRLF, and
+  // CR CR LF, which must split into two breaks) round-trips to the same
+  // text with each terminator rewritten to LF: no line is lost or added.
+  let piece = generator.element_of(["a", "bc", "\n", "\r", "\r\n", "\r\r\n"])
+  metamon.forall(
+    generator.list_of(piece, range.constant(0, 12)) |> generator.no_edges,
+    fn(pieces) {
+      let data = string.concat(pieces)
+      let expected = to_lf(data)
+      let assert Ok(items) = decoder.decode(encoder.encode(event.new(data)))
+      case items {
+        [item] ->
+          case event.event_of_item(item) {
+            Some(decoded) -> event.data_of(decoded) == expected
+            None -> False
+          }
+        _ -> False
+      }
+    },
+  )
+}
+
+/// CRLF and lone CR to LF, by code point, independently of how the
+/// target's `string.replace` treats the CRLF grapheme.
+fn to_lf(text: String) -> String {
+  text
+  |> string.to_utf_codepoints
+  |> list.map(string.utf_codepoint_to_int)
+  |> lf_codepoints([])
+}
+
+fn lf_codepoints(codes: List(Int), acc: List(Int)) -> String {
+  case codes {
+    [] ->
+      acc
+      |> list.reverse
+      |> list.filter_map(string.utf_codepoint)
+      |> string.from_utf_codepoints
+    [13, 10, ..rest] | [13, ..rest] -> lf_codepoints(rest, [10, ..acc])
+    [code, ..rest] -> lf_codepoints(rest, [code, ..acc])
+  }
+}
+
 pub fn encode_then_decode_preserves_named_event_test() -> Nil {
   metamon.forall(
     generator.tuple2(safe_non_empty_text_generator(), safe_text_generator()),

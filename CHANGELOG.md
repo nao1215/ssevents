@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - The minimum Gleam version is now 1.14.0 (was 1.15.0). 1.14.0 builds and tests the package unchanged on both targets, and `gleam_stdlib` 1.0 already requires it. CI tests that floor alongside the latest Gleam 1.x.
 
+### Fixed
+
+- **`ssevents/event`**: `new`, `data` and `from_parts` now rewrite a lone CR in `data` to LF, as they already did for CRLF, instead of dropping it. WHATWG SSE treats CR as a line terminator, so dropping it joined two lines: `data_of(new("a\rb"))` was `"ab"` and is now `"a\nb"`, the wire is `data: a` / `data: b` instead of `data: ab`, and `decode(encode(new(" 0Az~\n\r\r\n")))` no longer loses one of its three line breaks. For data without NUL and with lines of at most 2000 code points, `decode(encode(new(x)))` returns `x` with every CR, LF and CRLF written as LF. (#100, #102)
+- **`ssevents/encoder`**: on the JavaScript target, a `data` value starting with U+FEFF lost that character in the encoded wire (`encode(new("\u{FEFF}x"))` gave `"data: x\n\n"`, while Erlang kept it). The encoder's own newline pass, which decoded the value back from bytes, was redundant once `event` normalises line breaks, and is removed.
+
 ## [0.14.0] - 2026-05-21
 
 ### Changed
