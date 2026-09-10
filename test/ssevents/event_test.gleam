@@ -45,12 +45,13 @@ pub fn id_setter_strips_nul_test() {
   ssevents.id_of(event) |> should.equal(Some("withnul"))
 }
 
-pub fn new_strips_lone_cr_from_data_test() {
-  // #67: a literal CR in `data` cannot survive `decode(encode(x))`
-  // verbatim — the wire would coerce it. Strip at construction so
-  // `data_of(new(x))` already reflects what the wire would carry.
+pub fn new_normalises_lone_cr_in_data_to_lf_test() {
+  // A literal CR in `data` cannot survive `decode(encode(x))` verbatim:
+  // on the wire it ends a line, exactly like LF. Normalise it to LF at
+  // construction so `data_of(new(x))` already reflects what the wire
+  // carries, without losing the line break.
   let event = ssevents.new("a\rb")
-  ssevents.data_of(event) |> should.equal("ab")
+  ssevents.data_of(event) |> should.equal("a\nb")
 }
 
 pub fn new_strips_cr_from_crlf_pair_in_data_test() {
@@ -62,7 +63,7 @@ pub fn new_strips_cr_from_crlf_pair_in_data_test() {
 }
 
 pub fn new_strips_nul_from_data_test() {
-  // NUL is dropped silently by the decoder per §9.2.6.
+  // ssevents strips NUL from `data` at construction.
   let event = ssevents.new("hello\u{0000}world")
   ssevents.data_of(event) |> should.equal("helloworld")
 }
@@ -75,16 +76,16 @@ pub fn new_preserves_lf_in_data_test() {
   ssevents.data_of(event) |> should.equal("first\nsecond")
 }
 
-pub fn data_setter_strips_cr_test() {
+pub fn data_setter_normalises_cr_to_lf_test() {
   // Same rule via the builder helper.
   let event = ssevents.new("ignored") |> ssevents.data("a\rb")
-  ssevents.data_of(event) |> should.equal("ab")
+  ssevents.data_of(event) |> should.equal("a\nb")
 }
 
-pub fn from_parts_strips_cr_in_data_test() {
+pub fn from_parts_normalises_cr_in_data_to_lf_test() {
   let event =
     ssevents.from_parts(event_name: None, data: "x\ry", id: None, retry: None)
-  ssevents.data_of(event) |> should.equal("xy")
+  ssevents.data_of(event) |> should.equal("x\ny")
 }
 
 pub fn data_round_trips_after_cr_sanitisation_test() {

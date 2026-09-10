@@ -140,6 +140,8 @@ pub fn comment_text_of_item(item: Item) -> Option(String) {
   }
 }
 
+/// Build an event carrying `data`. CR and CRLF in `data` become LF and
+/// NUL is removed, so the value matches what `decode(encode(_))` returns.
 pub fn new(data: String) -> Event {
   Event(event: None, data: sanitize_data_value(data), id: None, retry: None)
 }
@@ -400,6 +402,8 @@ fn sanitize_retry(retry: Option(Int)) -> Option(Int) {
   }
 }
 
+/// Replace the event's `data`, normalising line breaks and removing NUL
+/// the same way as [`new`](#new).
 pub fn data(event: Event, data: String) -> Event {
   Event(
     event: event.event,
@@ -409,35 +413,39 @@ pub fn data(event: Event, data: String) -> Event {
   )
 }
 
-/// Strip CR (U+000D) and NUL (U+0000) from a `data` value, and
-/// convert standalone CRLF graphemes to LF.
+/// Rewrite every CRLF and lone CR (U+000D) in a `data` value to LF, and
+/// strip NUL (U+0000).
 ///
-/// WHATWG SSE §9.2.6 normalises CR / CRLF / LF to LF on the wire side
-/// and silently drops NUL, so neither sequence can survive
-/// `decode(encode(x))` verbatim inside `data`. Strip / normalise both
-/// at construction so the in-memory representation already matches
-/// what the wire would carry. LF is preserved — `data` may
-/// legitimately contain logical newlines, and the encoder splits on
-/// LF to emit multi-line `data:` blocks; the decoder rejoins those
-/// lines with LF, so `\n` round-trips cleanly.
+/// WHATWG SSE §9.2.6 treats CR, CRLF and LF alike as line terminators,
+/// so a CR cannot survive `decode(encode(x))` verbatim inside `data`.
+/// Normalise at construction so the in-memory representation already
+/// matches what the wire carries. A CR becomes LF rather than being
+/// dropped: it ends a line on the wire, and dropping it would join two
+/// lines. LF is preserved — the encoder splits on LF to emit multi-line
+/// `data:` blocks and the decoder rejoins those lines with LF. NUL is
+/// removed by this library so `data` never carries one.
 ///
-/// The implementation maps over Unicode graphemes (`\r\n` is a single
-/// grapheme per UAX #29). A `string.replace`-based pass cannot strip
-/// the `\r` half of a CRLF pair on the JavaScript target because the
-/// CRLF grapheme is opaque to substring search.
+/// The walk matches both a `"\r\n"` grapheme and a `"\r"` followed by
+/// `"\n"`: `string.to_graphemes` returns the former on Erlang and on
+/// JavaScript runtimes with `Intl.Segmenter`, and the latter where the
+/// JavaScript fallback splits by code point. A `string.replace` pass
+/// cannot tell the `\r` of a CRLF pair from a lone `\r` consistently
+/// across targets: it matches graphemes on Erlang and code units on
+/// JavaScript.
 fn sanitize_data_value(value: String) -> String {
-  value
-  |> string.to_graphemes
-  |> list.flat_map(map_data_grapheme)
-  |> string.join(with: "")
+  sanitize_data_graphemes(string.to_graphemes(value), [])
 }
 
-fn map_data_grapheme(grapheme: String) -> List(String) {
-  case grapheme {
-    "\r" -> []
-    "\u{0000}" -> []
-    "\r\n" -> ["\n"]
-    other -> [other]
+fn sanitize_data_graphemes(
+  graphemes: List(String),
+  acc: List(String),
+) -> String {
+  case graphemes {
+    [] -> acc |> list.reverse |> string.concat
+    ["\r", "\n", ..rest] | ["\r\n", ..rest] | ["\r", ..rest] ->
+      sanitize_data_graphemes(rest, ["\n", ..acc])
+    ["\u{0000}", ..rest] -> sanitize_data_graphemes(rest, acc)
+    [grapheme, ..rest] -> sanitize_data_graphemes(rest, [grapheme, ..acc])
   }
 }
 
