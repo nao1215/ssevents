@@ -30,7 +30,9 @@ pub fn retry(state: ReconnectState) -> Option(Int) {
   state.retry
 }
 
-pub fn last_event_id_header(state: ReconnectState) -> Option(#(String, String)) {
+pub fn last_event_id_header(
+  state: ReconnectState,
+) -> Option(#(String, String)) {
   case state.last_event_id {
     Some(id) -> Some(#("Last-Event-ID", id))
     None -> None
