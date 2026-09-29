@@ -5,6 +5,7 @@
 [![Hex Downloads](https://img.shields.io/hexpm/dt/ssevents)](https://hex.pm/packages/ssevents)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/ssevents/)
 [![License](https://img.shields.io/github/license/nao1215/ssevents)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/nao1215/ssevents/badge)](https://scorecard.dev/viewer/?uri=github.com/nao1215/ssevents)
 
 `ssevents` is a Gleam library for working with Server-Sent Events
 (SSE) on both the Erlang and JavaScript targets.
