@@ -238,7 +238,7 @@ gh attestation verify ssevents-<version>.tar --repo nao1215/ssevents
 
 cosign verify-blob \
   --bundle checksums.txt.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/nao1215/ssevents/' \
+  --certificate-identity-regexp '^https://github\.com/nao1215/ssevents/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 sha256sum --check checksums.txt
