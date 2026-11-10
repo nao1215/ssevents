@@ -227,6 +227,23 @@ GitHub Release using the matching `[X.Y.Z]` section as its body — so
 if the section is missing or mistyped, the release notes will be
 empty.
 
+## Verifying releases
+
+Each GitHub Release attaches the Hex package tarball (`ssevents-<version>.tar`),
+`checksums.txt`, a cosign signature bundle (`checksums.txt.sigstore.json`) and
+build provenance (`ssevents-<version>.intoto.jsonl`). Download the assets, then:
+
+```sh
+gh attestation verify ssevents-<version>.tar --repo nao1215/ssevents
+
+cosign verify-blob \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github\.com/nao1215/ssevents/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+sha256sum --check checksums.txt
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
