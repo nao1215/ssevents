@@ -209,9 +209,13 @@ fn process_lines(
           }
       }
 
+    // A trailing CR is held back until the next chunk shows whether an
+    // LF follows. It terminates the line either way, so it does not count
+    // towards the line's length (the one-shot path never sees it there).
     Ok(None) ->
       case
-        bit_array.byte_size(state.buffer) > limit.max_line_bytes(state.limits)
+        bit_array.byte_size(strip_trailing_cr(state.buffer))
+        > limit.max_line_bytes(state.limits)
       {
         True -> Error(LineTooLong(limit.max_line_bytes(state.limits)))
         False -> Ok(#(state, list.reverse(emitted_rev)))

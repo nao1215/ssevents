@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The incremental decoder (`push`) no longer counts a CR at the end of a chunk towards `max_line_bytes`. A line of exactly `max_line_bytes` bytes ending in CR or CRLF was rejected with `LineTooLong` when a chunk ended right after the CR, while `decode` and other chunkings accepted it.
+
 ### Changed
 
 - GitHub Releases now attach the Hex package tarball, `checksums.txt`, a keyless cosign signature bundle for it and build provenance (`*.intoto.jsonl`). See "Verifying releases" in the README.

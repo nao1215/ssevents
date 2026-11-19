@@ -486,3 +486,34 @@ pub fn decode_preserves_bom_after_leading_space_test() {
   let assert Ok([EventItem(decoded)]) = ssevents.decode(wire)
   ssevents.data_of(decoded) |> should.equal("\u{FEFF}x")
 }
+
+pub fn pending_cr_does_not_count_towards_max_line_bytes_test() {
+  // A chunk that ends in CR may be followed by LF, so the decoder keeps
+  // the CR in its buffer. It is a line terminator either way and must not
+  // push a line of exactly `max_line_bytes` over the limit.
+  let limits =
+    ssevents.new_limits(
+      max_line_bytes: 10,
+      max_event_bytes: 65_536,
+      max_data_lines: 1024,
+      max_retry_value: 86_400_000,
+    )
+  let wire = "data: abcd\r\ndata: efgh\r\r\n"
+  let one_shot = ssevents.decode_with_limits(wire, limits: limits)
+  one_shot |> should.be_ok
+  let assert Ok(#(state, first)) =
+    ssevents.push(ssevents.new_decoder_with_limits(limits), <<
+      "data: abcd\r":utf8,
+    >>)
+  let assert Ok(#(state, second)) =
+    ssevents.push(state, <<"\ndata: efgh\r":utf8>>)
+  let assert Ok(#(state, third)) = ssevents.push(state, <<"\r\n":utf8>>)
+  let assert Ok(rest) = ssevents.finish(state)
+  Ok(list.flatten([first, second, third, rest])) |> should.equal(one_shot)
+
+  // One byte more is still rejected, with or without the pending CR.
+  ssevents.push(ssevents.new_decoder_with_limits(limits), <<
+    "data: abcde\r":utf8,
+  >>)
+  |> should.equal(Error(LineTooLong(10)))
+}
