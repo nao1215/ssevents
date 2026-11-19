@@ -230,6 +230,18 @@ GitHub Release using the matching `[X.Y.Z]` section as its body — so
 if the section is missing or mistyped, the release notes will be
 empty.
 
+## Testing
+
+| Technique | Bug class caught here |
+|---|---|
+| Examples and unit tests | [Departures from the WHATWG event stream rules](doc/testing.md#examples-and-unit-tests) |
+| Generated properties | [Encode / decode round trips that change data, names, ids or retry](doc/testing.md#generated-properties) |
+| Chunk parity | [Incremental decoding that depends on where chunks split](doc/testing.md#chunk-parity) |
+| Differential testing | [One-shot and incremental decoders disagreeing on odd input or at limits](doc/testing.md#differential-testing) |
+| Boundary values | [Off-by-one limit and validation checks](doc/testing.md#boundary-values) |
+| Nightly runs | [Rare inputs the normal run count misses](doc/testing.md#nightly-runs) |
+| Mutation testing | [Assertions that miss a changed operator or branch](doc/testing.md#mutation-testing) |
+
 ## Verifying releases
 
 Each GitHub Release attaches the Hex package tarball (`ssevents-<version>.tar`),
