@@ -10,21 +10,13 @@
 [![License](https://img.shields.io/github/license/nao1215/ssevents)](./LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/nao1215/ssevents/badge)](https://scorecard.dev/viewer/?uri=github.com/nao1215/ssevents)
 
-`ssevents` is a Gleam library for working with Server-Sent Events
-(SSE) on both the Erlang and JavaScript targets.
-
-It provides a runtime-agnostic core for:
-
-- constructing events and comments
-- deterministic SSE encoding
-- full-body and incremental decoding
-- reconnect metadata tracking
-- explicit validation helpers
-- chunk-stream adapters via `ssevents/stream`
-
-The core stays independent from web frameworks, HTTP clients, timers,
-filesystems, and databases so it can be reused by both client and
-server libraries.
+`ssevents` encodes and decodes Server-Sent Events (SSE) in Gleam on
+Erlang and JavaScript. It handles events and comments, full-body and
+incremental decoding, reconnect metadata, validation, and chunk-stream
+adapters in `ssevents/stream`. It does not depend on any web framework,
+HTTP client, timer, filesystem or database, so client and server
+libraries can both use it. The full API is on
+[HexDocs](https://hexdocs.pm/ssevents/).
 
 ## Install
 
@@ -34,49 +26,7 @@ gleam add ssevents
 
 ## Usage
 
-### Choosing an encode function
-
-- `encode` / `encode_bytes` operate on `Event`.
-- `encode_item` / `encode_item_bytes` operate on `Item`, so they can
-  encode either an event or a comment.
-- `encode_items` / `encode_items_bytes` operate on a whole `List(Item)`.
-- `*_bytes` returns `BitArray` for HTTP response bodies and socket
-  writes; the non-suffixed variants return `String` for logging,
-  debugging, and tests.
-
-### Encode one event
-
-```gleam
-import ssevents
-
-pub fn encode_example() -> BitArray {
-  ssevents.new("job started")
-  |> ssevents.event("job.update")
-  |> ssevents.id("job-123:1")
-  |> ssevents.retry(5000)
-  |> ssevents.event_item
-  |> ssevents.encode_item_bytes
-}
-```
-
-> **`retry/2` panics on negative input.** WHATWG SSE §9.2.6 only
-> recognises a non-negative reconnection time, so `ssevents.retry(_,
-> ms)` for `ms < 0` raises a structured panic rather than emit a
-> contract-violating wire. If the value comes from untrusted input
-> (a request field, a deserialised config, a CLI flag), reach for
-> `ssevents.retry_clamp/2` — it silently rounds negative values up
-> to `0` *and silently drops values above the 24 h cap
-> (`limit.default_max_retry_value`) to `None`*, so callers forwarding
-> truly noisy input must accept that out-of-range values vanish from
-> the wire rather than produce a `retry:` line. The drop matches
-> `retry/2`'s and `from_parts/4`'s behaviour at that boundary so the
-> default decoder round-trips. Same posture applies if the
-> name / id / comment text comes from untrusted input: prefer the
-> `*_checked` variants (`event_checked`, `id_checked`,
-> `named_checked`, `comment_checked`) so CR / LF / NUL bytes
-> surface as `EventError` instead of being silently stripped.
-
-### Encode a whole SSE response body
+### Encode
 
 ```gleam
 import ssevents
@@ -86,12 +36,39 @@ pub fn encode_response_body() -> String {
     ssevents.comment("stream opened"),
     ssevents.named("job.started", "job-123")
     |> ssevents.id("cursor-1")
+    |> ssevents.retry(5000)
     |> ssevents.event_item,
     ssevents.heartbeat(),
   ]
   |> ssevents.encode_items
 }
 ```
+
+The returned string:
+
+```text
+: stream opened
+event: job.started
+id: cursor-1
+retry: 5000
+data: job-123
+
+: heartbeat
+```
+
+`encode` works on one `Event`, `encode_item` on one `Item` (event or
+comment), and `encode_items` on a `List(Item)`. Each has a `*_bytes`
+variant that returns a `BitArray` for response bodies and sockets.
+
+`retry/2` panics on a negative value, because WHATWG SSE §9.2.6 only
+allows a non-negative reconnection time. For untrusted input use
+`ssevents.retry_clamp/2`, which raises negative values to `0` and turns
+values above the 24 h cap (`limit.default_max_retry_value`) into `None`,
+so no `retry:` line is written; `retry/2` and `from_parts/4` drop at the
+same boundary, so the default decoder round-trips. For untrusted names,
+ids or comment text, the `*_checked` variants (`event_checked`,
+`id_checked`, `named_checked`, `comment_checked`) return an
+`EventError` for CR / LF / NUL instead of stripping them.
 
 ### Decode a full body
 
@@ -146,13 +123,8 @@ pub fn streaming_example() {
 
 ### Decoding untrusted input
 
-If the peer is untrusted, set explicit decoder limits instead of
-relying on the package defaults. The limit knobs are:
-
-- `max_line_bytes`
-- `max_event_bytes`
-- `max_data_lines`
-- `max_retry_value`
+The defaults suit development and trusted peers. For an untrusted peer,
+set the four limits to match your traffic:
 
 ```gleam
 import ssevents
@@ -169,10 +141,6 @@ pub fn safe_decode(body: BitArray) {
   ssevents.decode_bytes_with_limits(body, limits: limits)
 }
 ```
-
-The built-in defaults are suitable for development and trusted inputs.
-Production clients and servers should choose limits that match their
-own traffic shape and threat model.
 
 See [SECURITY.md](SECURITY.md) for the project security policy.
 
@@ -196,10 +164,20 @@ pub fn reconnect_example(item: ssevents.Item) {
 
 ### Runnable examples
 
-End-to-end snippets — including server-side emit, browser-side
-consumption, HTTP header guidance, and reconnect handling — live
-under [`examples/`](./examples/). Each subdirectory is a self-contained
-Gleam project; run any of them with `cd examples/<name> && gleam run`.
+[`examples/`](./examples/) has standalone Gleam projects for emitting
+from a server and consuming chunked input, plus notes on HTTP headers,
+browser clients and reconnects. Run one with
+`cd examples/<name> && gleam run`. `quick_start` prints:
+
+```text
+wrote 158 bytes of SSE
+decoded 4 items:
+- comment: stream opened
+- event job.started, id=cursor-1, retry=5000ms: build #42
+- event job.progress, id=cursor-2: step 1/3
+running lints
+- comment: heartbeat
+```
 
 ## Development
 
@@ -210,25 +188,20 @@ just ci
 
 ## Release process
 
-The package version lives in [`gleam.toml`](./gleam.toml) and the
-per-version notes live in [`CHANGELOG.md`](./CHANGELOG.md). The two
-must stay in sync.
-
-While developing, add new entries to the `[Unreleased]` section. When
-cutting a release:
+The version is in [`gleam.toml`](./gleam.toml) and the notes are in
+[`CHANGELOG.md`](./CHANGELOG.md). Add entries under `[Unreleased]` while
+developing. To release:
 
 1. Bump `version = "X.Y.Z"` in `gleam.toml`.
-2. In `CHANGELOG.md`, rename the `[Unreleased]` heading to
-   `[X.Y.Z] - YYYY-MM-DD` and re-insert a fresh empty `[Unreleased]`
-   section above it.
-3. Land the bump on `main`, then push a `vX.Y.Z` tag.
+2. In `CHANGELOG.md`, rename `[Unreleased]` to `[X.Y.Z] - YYYY-MM-DD`
+   and add a new empty `[Unreleased]` above it.
+3. Merge the bump to `main`, then push a `vX.Y.Z` tag.
 
-Pushing the tag triggers
+The tag runs
 [`.github/workflows/release.yml`](./.github/workflows/release.yml),
-which runs the full check suite, publishes to Hex, and creates a
-GitHub Release using the matching `[X.Y.Z]` section as its body — so
-if the section is missing or mistyped, the release notes will be
-empty.
+which runs the checks, publishes to Hex, and creates a GitHub Release
+whose body is the `[X.Y.Z]` section. If that section is missing or
+misnamed, the release notes are empty.
 
 ## Testing
 
