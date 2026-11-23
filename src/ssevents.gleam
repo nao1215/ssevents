@@ -1,513 +1,728 @@
-//// Canonical public surface for the `ssevents` package.
+//// Encode and decode Server-Sent Events, the `text/event-stream` format.
 ////
-//// The focused modules (`ssevents/event`, `ssevents/encoder`,
-//// `ssevents/decoder`, `ssevents/reconnect`, `ssevents/validate`,
-//// `ssevents/limit`, `ssevents/heartbeat`, `ssevents/stream`,
-//// `ssevents/error`) carry the actual implementation, but they are an
-//// implementation detail: external code should prefer the spellings
-//// re-exported here. This is the surface the README and the published
-//// HexDocs documentation consider authoritative, and it is the surface
-//// that follows semver — the submodule shapes may be reorganized
-//// between releases.
-////
-//// Reach into a submodule directly only when the facade does not yet
-//// expose what you need; in that case, opening an issue so the
-//// missing entry point can be added at this level is preferred to
-//// scattering submodule imports across user code.
+//// A server builds each `Event` with `new` or `named`, adds `id` and
+//// `retry` when it needs them, and writes the stream with `encode` or
+//// `encode_items`. A client reads a whole body with `decode`, or one
+//// chunk at a time with `new_decoder`, `push` and `finish`.
 
+import gleam/bit_array
+import gleam/bool
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import ssevents/decoder
-import ssevents/encoder
-import ssevents/error
-import ssevents/event
-import ssevents/heartbeat
-import ssevents/limit
-import ssevents/reconnect
-import ssevents/stream
-import ssevents/validate
+import gleam/result
+import gleam/string
 
-pub const package_name = "ssevents"
+// Events and comments --------------------------------------------------------
 
-pub const default_content_type = "text/event-stream"
+/// An event with its `event`, `data`, `id` and `retry` fields.
+///
+/// Build one with `new` or `named`, and read it with `name_of`, `data_of`,
+/// `id_of` and `retry_of`.
+///
+pub opaque type Event {
+  // `name` and `id` hold no CR, LF or NUL, `data` holds no CR or NUL, and
+  // `retry` is not negative. That keeps every encoded field on one line
+  // and makes `decode` return the event that was encoded.
+  Event(
+    name: Option(String),
+    data: String,
+    id: Option(String),
+    retry: Option(Int),
+  )
+}
 
-pub type Event =
-  event.Event
+/// The text of a comment line. Build one with `comment`.
+///
+pub opaque type Comment {
+  // `text` holds no CR, LF or NUL, so it is written as one line.
+  Comment(text: String)
+}
 
-pub type Item =
-  event.Item
+/// An event or a comment, in the order they appear in a stream.
+///
+pub type Item {
+  EventItem(Event)
+  CommentItem(Comment)
+}
 
-pub type DecodeState =
-  decoder.DecodeState
-
-pub type Limits =
-  limit.Limits
-
-pub type LineEnding =
-  encoder.LineEnding
-
-pub type ReconnectState =
-  reconnect.ReconnectState
-
-pub type SseError =
-  error.SseError
-
-/// Re-export of `ssevents/event.EventError`.
-pub type EventError =
-  event.EventError
-
-pub type Iterator(a) =
-  stream.Iterator(a)
-
-pub type IteratorStep(a) =
-  stream.Step(a)
-
+/// Returns `"text/event-stream"`, the media type of an event stream
+/// response.
+///
 pub fn content_type() -> String {
-  default_content_type
+  "text/event-stream"
 }
 
-pub fn default_limits() -> Limits {
-  limit.default()
-}
-
+/// Creates an event without a name, which a browser `EventSource` hands to
+/// its `message` listeners.
+///
+/// CR and CRLF in `data` become LF and NUL is removed, so `data_of` returns
+/// what a client will see.
+///
+/// ## Examples
+///
+/// ```gleam
+/// ssevents.new("a\r\nb") |> ssevents.data_of
+/// // -> "a\nb"
+/// ```
+///
 pub fn new(data: String) -> Event {
-  event.new(data)
+  Event(name: None, data: clean_data(data), id: None, retry: None)
 }
 
-pub fn from_parts(
-  event_name event_name: Option(String),
-  data data: String,
-  id id: Option(String),
-  retry retry: Option(Int),
-) -> Event {
-  event.from_parts(event_name: event_name, data: data, id: id, retry: retry)
-}
-
-pub fn message(data: String) -> Event {
-  event.message(data)
-}
-
+/// Creates an event whose `event` field is `name`, which a browser
+/// `EventSource` hands to the listeners for that name.
+///
+/// CR, LF and NUL are removed from `name`, and `data` is cleaned as in
+/// `new`. An empty name gives the same event as `new`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// ssevents.named("job.done", "42") |> ssevents.name_of
+/// // -> Some("job.done")
+/// ```
+///
 pub fn named(name: String, data: String) -> Event {
-  event.named(name, data)
+  Event(..new(data), name: name_field(clean_field(name)))
 }
 
-pub fn name_of(event: Event) -> Option(String) {
-  event.name_of(event)
-}
-
-pub fn data_of(event: Event) -> String {
-  event.data_of(event)
-}
-
-pub fn id_of(event: Event) -> Option(String) {
-  event.id_of(event)
-}
-
-pub fn retry_of(event: Event) -> Option(Int) {
-  event.retry_of(event)
-}
-
-pub fn event(event: Event, name: String) -> Event {
-  event.event(event, name)
-}
-
-pub fn id(event: Event, id: String) -> Event {
-  event.id(event, id)
-}
-
-/// Strict counterpart of `event/2`: returns
-/// `Error(NameContainsControlBytes(value:))` when the name
-/// contains CR / LF / NUL bytes, otherwise sets the SSE
-/// `event:` field name. Use when the name comes from user-typed
-/// or upstream input and silent stripping would lose data the
-/// caller cares about. (#81)
-pub fn event_checked(event: Event, name: String) -> Result(Event, EventError) {
-  event.event_checked(event, name)
-}
-
-/// Strict counterpart of `id/2`: returns
-/// `Error(IdContainsControlBytes(value:))` when the id contains
-/// CR / LF / NUL bytes. The strip on id is especially dangerous —
-/// `id(_, "ab\u{0000}cd")` produces an event with `id = "abcd"`,
-/// silently mutating an authorisation-relevant identifier on
-/// reconnect (Last-Event-ID resume). The strict variant catches
-/// this at the builder boundary. (#81)
-pub fn id_checked(event: Event, id: String) -> Result(Event, EventError) {
-  event.id_checked(event, id)
-}
-
-/// Strict counterpart of `named/2`: returns
-/// `Error(NameContainsControlBytes(value:))` when the name
-/// contains CR / LF / NUL bytes. Convenience for the common
-/// `new |> event_checked` pipeline. (#81)
-pub fn named_checked(name: String, data: String) -> Result(Event, EventError) {
-  event.named_checked(name, data)
-}
-
-/// Strict counterpart of `comment/1`: returns
-/// `Error(CommentContainsControlBytes(value:))` when the comment
-/// text contains CR / LF / NUL bytes. The non-strict `comment/1`
-/// silently strips these bytes; WHATWG SSE §9.2.6 has no notion
-/// of a multi-line comment, so embedded line breaks would fan out
-/// into multiple comments on the wire. (#81)
-pub fn comment_checked(text: String) -> Result(Item, EventError) {
-  case event.comment_checked(text) {
-    Ok(comment) -> Ok(event.comment_item_of(comment))
-    Error(error_value) -> Error(error_value)
+// A browser hands an event with an empty name to its `message` listeners,
+// the same as one without a name.
+fn name_field(name: String) -> Option(String) {
+  case name {
+    "" -> None
+    _ -> Some(name)
   }
 }
 
-/// Set the SSE `retry:` reconnection time on an event.
+/// Sets the `id` field. A client sends the last id it saw back in the
+/// `Last-Event-ID` header when it reconnects.
 ///
-/// `milliseconds` must be `>= 0`. WHATWG SSE §9.2.6 only recognises a
-/// retry value whose textual form "consists of only ASCII digits", so a
-/// negative value would be either dropped on the wire (the leading `-`
-/// breaks the digits-only check) or interpreted as `0` and trigger a
-/// tight reconnect loop against the server. The builder panics on
-/// `ms < 0`; reach for `retry_clamp/2` when the caller wants the
-/// lenient (clamp-to-`0`) posture.
+/// CR, LF and NUL are removed from `id`.
+///
+pub fn id(event: Event, id: String) -> Event {
+  Event(..event, id: Some(clean_field(id)))
+}
+
+/// Sets the `retry` field, the number of milliseconds a client waits
+/// before it reconnects.
+///
+/// A value below 0 or above 86_400_000 (24 hours) removes the field
+/// instead: the format has no negative numbers, and `decode` with
+/// `default_limits` ignores larger values.
+///
+/// ## Examples
+///
+/// ```gleam
+/// ssevents.new("x") |> ssevents.retry(5000) |> ssevents.retry_of
+/// // -> Some(5000)
+/// ```
+///
+/// ```gleam
+/// ssevents.new("x") |> ssevents.retry(-1) |> ssevents.retry_of
+/// // -> None
+/// ```
+///
 pub fn retry(event: Event, milliseconds: Int) -> Event {
-  event.retry(event, milliseconds)
+  Event(..event, retry: clean_retry(milliseconds))
 }
 
-/// Like `retry/2`, but clamps `milliseconds < 0` to `0` instead of
-/// panicking. Use this when forwarding a value computed from possibly-
-/// noisy input (e.g. a CLI flag, a deserialised config) and the caller
-/// would rather "publish a spec-valid retry" than crash.
-pub fn retry_clamp(event: Event, milliseconds: Int) -> Event {
-  event.retry_clamp(event, milliseconds)
+/// Returns the `event` field, or `None` for an event made with `new`.
+///
+pub fn name_of(event: Event) -> Option(String) {
+  event.name
 }
 
-pub fn data(event: Event, data: String) -> Event {
-  event.data(event, data)
+/// Returns the `data` field. Lines are separated by LF.
+///
+pub fn data_of(event: Event) -> String {
+  event.data
 }
 
-pub fn event_item(event: Event) -> Item {
-  event.event_item(event)
+/// Returns the `id` field.
+///
+pub fn id_of(event: Event) -> Option(String) {
+  event.id
 }
 
+/// Returns the `retry` field in milliseconds.
+///
+pub fn retry_of(event: Event) -> Option(Int) {
+  event.retry
+}
+
+/// Creates a comment line. Clients ignore comments, so a server can send
+/// one to keep an idle connection open.
+///
+/// CR, LF and NUL are removed from `text`, because a comment is a single
+/// line.
+///
+/// ## Examples
+///
+/// ```gleam
+/// ssevents.encode_items([ssevents.comment("ping")])
+/// // -> ": ping\n"
+/// ```
+///
 pub fn comment(text: String) -> Item {
-  heartbeat.comment(text)
+  CommentItem(Comment(text: clean_field(text)))
 }
 
-pub fn heartbeat() -> Item {
-  heartbeat.heartbeat()
-}
-
-/// Issue #77: Item-level inspection helpers exposed through the
-/// facade. The `Item` type is re-exported as a type alias from this
-/// module, but Gleam's type aliases do not carry the underlying
-/// `EventItem` / `CommentItem` constructors — pattern-matching on a
-/// decoded `Item` therefore requires reaching into
-/// `ssevents/event` for the variants. These accessors let callers stay
-/// inside the facade for the common cases.
-/// `True` when the item is an event (carries an SSE `Event` payload).
-pub fn is_event(item: Item) -> Bool {
-  event.is_event(item)
-}
-
-/// `True` when the item is a `:`-prefixed comment line.
-pub fn is_comment(item: Item) -> Bool {
-  event.is_comment(item)
-}
-
-/// Return the event payload when the item is an event, `None`
-/// otherwise. Pairs with `comment_text_of_item/1` for the comment
-/// side.
-pub fn event_of_item(item: Item) -> Option(Event) {
-  event.event_of_item(item)
-}
-
-/// Return the comment text when the item is a comment, `None`
-/// otherwise.
-pub fn comment_text_of_item(item: Item) -> Option(String) {
-  event.comment_text_of_item(item)
-}
-
-/// Filter a decoded item list down to its events, dropping comments.
-/// Convenience for the common "I just want the events" pattern after
-/// `decode/1`.
-pub fn events_of(items: List(Item)) -> List(Event) {
-  list.filter_map(items, fn(item) {
-    case event.event_of_item(item) {
-      Some(ev) -> Ok(ev)
-      None -> Error(Nil)
-    }
-  })
-}
-
-/// Filter a decoded item list down to its comment texts, dropping
-/// events. Pairs with `events_of/1`.
-pub fn comment_texts_of(items: List(Item)) -> List(String) {
-  list.filter_map(items, fn(item) {
-    case event.comment_text_of_item(item) {
-      Some(text) -> Ok(text)
-      None -> Error(Nil)
-    }
-  })
-}
-
-pub fn default_line_ending() -> LineEnding {
-  encoder.default_line_ending()
-}
-
-/// Encode one semantic SSE `Event` to its wire-format `String`.
+/// Returns the text of a comment.
 ///
-/// Use this when you want a text representation for logging,
-/// inspection, fixtures, or a caller that still expects `String`.
+pub fn comment_text(comment: Comment) -> String {
+  comment.text
+}
+
+fn clean_field(value: String) -> String {
+  value
+  |> string.replace(each: "\r\n", with: "")
+  |> string.replace(each: "\r", with: "")
+  |> string.replace(each: "\n", with: "")
+  |> string.replace(each: "\u{0000}", with: "")
+}
+
+fn clean_retry(milliseconds: Int) -> Option(Int) {
+  let max = default_limits.max_retry_value
+  case milliseconds {
+    _ if milliseconds < 0 || milliseconds > max -> None
+    _ -> Some(milliseconds)
+  }
+}
+
+// `string.replace` cannot tell the CR of a CRLF pair from a lone CR on
+// both targets: it matches graphemes on Erlang and code units on
+// JavaScript. `string.to_graphemes` gives `"\r\n"` as one grapheme on
+// Erlang and as `"\r"`, `"\n"` where JavaScript has no `Intl.Segmenter`,
+// so both shapes are matched here.
+fn clean_data(value: String) -> String {
+  clean_data_loop(string.to_graphemes(value), [])
+}
+
+fn clean_data_loop(graphemes: List(String), acc: List(String)) -> String {
+  case graphemes {
+    [] -> acc |> list.reverse |> string.concat
+    ["\r", "\n", ..rest] | ["\r\n", ..rest] | ["\r", ..rest] ->
+      clean_data_loop(rest, ["\n", ..acc])
+    ["\u{0000}", ..rest] -> clean_data_loop(rest, acc)
+    [grapheme, ..rest] -> clean_data_loop(rest, [grapheme, ..acc])
+  }
+}
+
+// Encoding -------------------------------------------------------------------
+
+/// Encodes one event, ending with the blank line that makes a client
+/// dispatch it. Lines end with LF.
+///
+/// A data line longer than 8000 bytes is written as several `data` lines
+/// of at most 2000 code points each, so that `decode` with
+/// `default_limits` can read it. A client joins those lines with LF, so
+/// the data it receives has an LF at each split. Data that has to arrive
+/// unchanged needs lines of at most 8000 bytes. The `event` and `id` lines
+/// are never split, so a name or id longer than about 8000 bytes gives a
+/// stream that `decode` with `default_limits` rejects.
+///
+/// ## Examples
+///
+/// ```gleam
+/// ssevents.named("update", "a\nb") |> ssevents.id("7") |> ssevents.encode
+/// // -> "event: update\nid: 7\ndata: a\ndata: b\n\n"
+/// ```
+///
 pub fn encode(event: Event) -> String {
-  encoder.encode(event)
+  let fields =
+    [
+      option.map(event.name, field_line("event", _)),
+      option.map(event.id, field_line("id", _)),
+      option.map(event.retry, fn(ms) { field_line("retry", int.to_string(ms)) }),
+    ]
+    |> option.values
+  let data =
+    event.data
+    |> string.split(on: "\n")
+    |> list.flat_map(split_long_line)
+    |> list.map(field_line("data", _))
+  string.concat(list.append(fields, data)) <> "\n"
 }
 
-/// Encode one semantic SSE `Event` to its wire-format `BitArray`.
+/// Encodes events and comments in order into one string.
 ///
-/// Use this for HTTP responses and other byte-oriented transports.
-pub fn encode_bytes(event: Event) -> BitArray {
-  encoder.encode_bytes(event)
-}
-
-/// Encode one `Item` (either an event or a comment) to `String`.
-pub fn encode_item(item: Item) -> String {
-  encoder.encode_item(item)
-}
-
-/// Encode one `Item` (either an event or a comment) to `BitArray`.
-pub fn encode_item_bytes(item: Item) -> BitArray {
-  encoder.encode_item_bytes(item)
-}
-
-/// Encode a whole sequence of SSE items to one `String`.
+/// ## Examples
+///
+/// ```gleam
+/// ssevents.encode_items([
+///   ssevents.comment("hello"),
+///   ssevents.EventItem(ssevents.new("x")),
+/// ])
+/// // -> ": hello\ndata: x\n\n"
+/// ```
+///
 pub fn encode_items(items: List(Item)) -> String {
-  encoder.encode_items(items)
+  items
+  |> list.map(fn(item) {
+    case item {
+      EventItem(event) -> encode(event)
+      CommentItem(Comment(text: "")) -> ":\n"
+      CommentItem(Comment(text:)) -> ": " <> text <> "\n"
+    }
+  })
+  |> string.concat
 }
 
-/// Encode a whole sequence of SSE items to one `BitArray`.
-pub fn encode_items_bytes(items: List(Item)) -> BitArray {
-  encoder.encode_items_bytes(items)
+fn field_line(field: String, value: String) -> String {
+  case value {
+    "" -> field <> ":\n"
+    _ -> field <> ": " <> value <> "\n"
+  }
 }
 
-pub fn encode_with_line_ending(
-  event: Event,
-  line_ending: LineEnding,
-) -> String {
-  encoder.encode_with_line_ending(event, line_ending)
+// 2000 code points take at most 8000 bytes in UTF-8, which leaves room for
+// the `data: ` prefix under the default `max_line_bytes` of 8192.
+const max_line_code_points = 2000
+
+fn split_long_line(line: String) -> List(String) {
+  case string.byte_size(line) <= max_line_code_points * 4 {
+    True -> [line]
+    False ->
+      line
+      |> string.to_utf_codepoints
+      |> list.sized_chunk(into: max_line_code_points)
+      |> list.map(string.from_utf_codepoints)
+  }
 }
 
-pub fn encode_item_with_line_ending(
-  item: Item,
-  line_ending: LineEnding,
-) -> String {
-  encoder.encode_item_with_line_ending(item, line_ending)
+// Decoding -------------------------------------------------------------------
+
+/// Bounds on what the decoder accepts, so a peer cannot make it buffer
+/// without limit. The values are not checked: 0 allows nothing of that
+/// kind except empty lines, and a negative value allows nothing. Start
+/// from `default_limits` and change the fields you need:
+///
+/// ```gleam
+/// ssevents.Limits(..ssevents.default_limits, max_event_bytes: 200_000)
+/// ```
+///
+pub type Limits {
+  Limits(
+    /// The longest line in bytes, not counting its line ending.
+    max_line_bytes: Int,
+    /// The most bytes the field lines of one event can add up to. Comment
+    /// lines do not count.
+    max_event_bytes: Int,
+    /// The most `data` lines one event can have.
+    max_data_lines: Int,
+    /// The largest `retry` value in milliseconds. A larger value is
+    /// ignored and the event is still returned.
+    max_retry_value: Int,
+  )
 }
 
-pub fn encode_items_with_line_ending(
-  items: List(Item),
-  line_ending: LineEnding,
-) -> String {
-  encoder.encode_items_with_line_ending(items, line_ending)
+/// 8192 bytes per line, 65_536 bytes per event, 1024 `data` lines per
+/// event, and a `retry` of at most 86_400_000 milliseconds (24 hours).
+///
+pub const default_limits =
+  Limits(
+    max_line_bytes: 8192,
+    max_event_bytes: 65_536,
+    max_data_lines: 1024,
+    max_retry_value: 86_400_000,
+  )
+
+/// Why a stream could not be decoded.
+///
+pub type SseError {
+  /// The input is not valid UTF-8.
+  InvalidUtf8
+  /// A line is longer than `max_line_bytes`.
+  LineTooLong(limit: Int)
+  /// An event is larger than `max_event_bytes`.
+  EventTooLarge(limit: Int)
+  /// An event has more `data` lines than `max_data_lines`.
+  TooManyDataLines(limit: Int)
 }
 
-pub fn decode(input: String) -> Result(List(Item), SseError) {
-  decoder.decode(input)
+/// Describes an error in English, for logs.
+///
+pub fn error_to_string(error: SseError) -> String {
+  case error {
+    InvalidUtf8 -> "invalid UTF-8 in SSE input"
+    LineTooLong(limit:) ->
+      "line exceeds configured byte limit " <> int.to_string(limit)
+    EventTooLarge(limit:) ->
+      "event exceeds configured byte limit " <> int.to_string(limit)
+    TooManyDataLines(limit:) ->
+      "event exceeds configured data-line limit " <> int.to_string(limit)
+  }
 }
 
-pub fn decode_bytes(input: BitArray) -> Result(List(Item), SseError) {
-  decoder.decode_bytes(input)
+/// Decodes a whole stream into its events and comments.
+///
+/// Lines can end with LF, CRLF or CR, and a byte order mark at the start
+/// is skipped. Unknown fields are ignored, as are an `id` that contains
+/// NUL and a `retry` that is not all digits or is above `max_retry_value`.
+/// A block of lines with no `data` field is not returned, as a browser
+/// does not dispatch it. An event at the end of the input without the
+/// closing blank line is still returned. The first error ends decoding.
+///
+/// ## Examples
+///
+/// ```gleam
+/// ssevents.decode(<<"event: ping\ndata: 1\n\n":utf8>>, ssevents.default_limits)
+/// // -> Ok([ssevents.EventItem(ssevents.named("ping", "1"))])
+/// ```
+///
+/// ```gleam
+/// let limits = ssevents.Limits(..ssevents.default_limits, max_line_bytes: 4)
+/// ssevents.decode(<<"data: hello\n\n":utf8>>, limits)
+/// // -> Error(ssevents.LineTooLong(limit: 4))
+/// ```
+///
+pub fn decode(input: BitArray, limits: Limits) -> Result(List(Item), SseError) {
+  use #(state, items) <- result.try(push(new_decoder(limits), input))
+  use rest <- result.map(finish(state))
+  list.append(items, rest)
 }
 
-pub fn decode_with_limits(
-  input: String,
-  limits limits: Limits,
-) -> Result(List(Item), SseError) {
-  decoder.decode_with_limits(input, limits: limits)
+/// The state of a decoder that reads a stream one chunk at a time.
+///
+pub opaque type DecodeState {
+  DecodeState(
+    limits: Limits,
+    // Bytes of a line that has not ended yet.
+    buffer: BitArray,
+    // False until the first bytes show whether the stream starts with a
+    // byte order mark.
+    bom_checked: Bool,
+    // True when the last line ended with a CR at the end of a chunk, so an
+    // LF at the start of the next chunk is the rest of a CRLF.
+    skip_lf: Bool,
+    name: Option(String),
+    // The `data` lines of the current event, last line first.
+    data_lines: List(String),
+    data_line_count: Int,
+    id: Option(String),
+    retry: Option(Int),
+    event_bytes: Int,
+  )
 }
 
-pub fn decode_bytes_with_limits(
-  input: BitArray,
-  limits limits: Limits,
-) -> Result(List(Item), SseError) {
-  decoder.decode_bytes_with_limits(input, limits: limits)
+/// Creates a decoder for a stream that arrives in chunks, such as the body
+/// of an HTTP response. Give each chunk to `push` and call `finish` when
+/// the stream ends.
+///
+pub fn new_decoder(limits: Limits) -> DecodeState {
+  DecodeState(
+    limits:,
+    buffer: <<>>,
+    bom_checked: False,
+    skip_lf: False,
+    name: None,
+    data_lines: [],
+    data_line_count: 0,
+    id: None,
+    retry: None,
+    event_bytes: 0,
+  )
 }
 
-pub fn new_decoder() -> DecodeState {
-  decoder.new_decoder()
-}
-
-pub fn new_decoder_with_limits(limits: Limits) -> DecodeState {
-  decoder.new_decoder_with_limits(limits)
-}
-
+/// Reads the next chunk and returns the events and comments it completes.
+///
+/// A chunk can end anywhere, even inside a character. The bytes of an
+/// unfinished line wait for the next chunk. Returns the same items and
+/// errors as `decode` would for the whole stream, however it is split.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let decoder = ssevents.new_decoder(ssevents.default_limits)
+/// let assert Ok(#(decoder, [])) = ssevents.push(decoder, <<"data: he":utf8>>)
+/// ssevents.push(decoder, <<"llo\n\n":utf8>>)
+/// // -> Ok(#(_, [ssevents.EventItem(ssevents.new("hello"))]))
+/// ```
+///
 pub fn push(
   state: DecodeState,
   chunk: BitArray,
 ) -> Result(#(DecodeState, List(Item)), SseError) {
-  decoder.push(state, chunk)
+  DecodeState(..state, buffer: bit_array.append(state.buffer, chunk))
+  |> skip_byte_order_mark
+  |> skip_lf_after_cr
+  |> read_lines([])
 }
 
+/// Ends the stream and returns what is left: the last line if it had no
+/// line ending, and the event it belongs to.
+///
 pub fn finish(state: DecodeState) -> Result(List(Item), SseError) {
-  decoder.finish(state)
+  case state.buffer {
+    <<>> -> Ok(option.values([dispatch(state).1]))
+    line -> {
+      use #(state, item) <- result.map(read_line(
+        DecodeState(..state, buffer: <<>>),
+        line,
+      ))
+      option.values([item, dispatch(state).1])
+    }
+  }
 }
 
-pub fn limits() -> Limits {
-  limit.default()
+fn skip_byte_order_mark(state: DecodeState) -> DecodeState {
+  case state.bom_checked, state.buffer {
+    True, _ -> state
+    False, <<0xEF, 0xBB, 0xBF, rest:bytes>> ->
+      DecodeState(..state, buffer: rest, bom_checked: True)
+    // The mark may be split across chunks.
+    False, <<0xEF, 0xBB>> | False, <<0xEF>> | False, <<>> -> state
+    False, _ -> DecodeState(..state, bom_checked: True)
+  }
 }
 
-pub fn new_limits(
-  max_line_bytes max_line_bytes: Int,
-  max_event_bytes max_event_bytes: Int,
-  max_data_lines max_data_lines: Int,
-  max_retry_value max_retry_value: Int,
-) -> Limits {
-  limit.new(
-    max_line_bytes: max_line_bytes,
-    max_event_bytes: max_event_bytes,
-    max_data_lines: max_data_lines,
-    max_retry_value: max_retry_value,
-  )
+fn skip_lf_after_cr(state: DecodeState) -> DecodeState {
+  case state.skip_lf, state.buffer {
+    False, _ | True, <<>> -> state
+    True, <<10, rest:bytes>> ->
+      DecodeState(..state, buffer: rest, skip_lf: False)
+    True, _ -> DecodeState(..state, skip_lf: False)
+  }
 }
 
-pub fn max_line_bytes(limits: Limits) -> Int {
-  limit.max_line_bytes(limits)
+fn read_lines(
+  state: DecodeState,
+  items: List(Item),
+) -> Result(#(DecodeState, List(Item)), SseError) {
+  let max = state.limits.max_line_bytes
+  case line_end(state.buffer, 0) {
+    Ok(#(length, ending)) ->
+      case length > max {
+        True -> Error(LineTooLong(limit: max))
+        False -> {
+          let #(line, rest) = split_bytes(state.buffer, length, ending)
+          // A CR that ends the buffer ends the line now, so the event is
+          // not held back until the next chunk shows what follows it.
+          let skip_lf =
+            ending == 1
+            && rest == <<>>
+            && bit_array.slice(state.buffer, length, 1) == Ok(<<13>>)
+          use #(state, item) <- result.try(read_line(
+            DecodeState(..state, buffer: rest, skip_lf:),
+            line,
+          ))
+          case item {
+            Some(item) -> read_lines(state, [item, ..items])
+            None -> read_lines(state, items)
+          }
+        }
+      }
+    Error(Nil) ->
+      case bit_array.byte_size(state.buffer) > max {
+        True -> Error(LineTooLong(limit: max))
+        False -> Ok(#(state, list.reverse(items)))
+      }
+  }
 }
 
-pub fn max_event_bytes(limits: Limits) -> Int {
-  limit.max_event_bytes(limits)
+// Returns the length of the first line in `bytes`, starting the count at
+// `length`, and the length of its line ending.
+fn line_end(bytes: BitArray, length: Int) -> Result(#(Int, Int), Nil) {
+  case bytes {
+    <<13, 10, _:bytes>> -> Ok(#(length, 2))
+    <<13, _:bytes>> | <<10, _:bytes>> -> Ok(#(length, 1))
+    <<_, rest:bytes>> -> line_end(rest, length + 1)
+    _ -> Error(Nil)
+  }
 }
 
-/// Alias of `max_event_bytes/1`. Pairs with `with_max_event_size/2`
-/// so callers that raise the per-event cap can read it back using the
-/// same spelling. (#96)
-pub fn max_event_size(limits: Limits) -> Int {
-  limit.max_event_size(limits)
+fn split_bytes(
+  bytes: BitArray,
+  length: Int,
+  skip: Int,
+) -> #(BitArray, BitArray) {
+  let size = bit_array.byte_size(bytes)
+  let head = bit_array.slice(bytes, 0, length) |> result.unwrap(<<>>)
+  let tail =
+    bit_array.slice(bytes, length + skip, size - length - skip)
+    |> result.unwrap(<<>>)
+  #(head, tail)
 }
 
-/// Override the per-event byte cap on a `Limits` value.
+fn read_line(
+  state: DecodeState,
+  line: BitArray,
+) -> Result(#(DecodeState, Option(Item)), SseError) {
+  case line {
+    <<>> -> Ok(dispatch(state))
+    <<":":utf8, text:bytes>> -> {
+      use text <- result.map(to_text(drop_leading_space(text)))
+      #(state, Some(CommentItem(Comment(text: clean_field(text)))))
+    }
+    _ -> {
+      let #(field, value) = split_field(line)
+      use field <- result.try(to_text(field))
+      use value <- result.try(to_text(value))
+      let event_bytes = state.event_bytes + bit_array.byte_size(line)
+      case event_bytes > state.limits.max_event_bytes {
+        True -> Error(EventTooLarge(limit: state.limits.max_event_bytes))
+        False ->
+          apply_field(DecodeState(..state, event_bytes:), field, value)
+          |> result.map(fn(state) { #(state, None) })
+      }
+    }
+  }
+}
+
+// Splits a field line at its first colon and drops one space after it. A
+// line without a colon is a field name with an empty value.
+fn split_field(line: BitArray) -> #(BitArray, BitArray) {
+  case colon_index(line, 0) {
+    Ok(index) -> {
+      let #(field, value) = split_bytes(line, index, 1)
+      #(field, drop_leading_space(value))
+    }
+    Error(Nil) -> #(line, <<>>)
+  }
+}
+
+fn colon_index(bytes: BitArray, index: Int) -> Result(Int, Nil) {
+  case bytes {
+    <<":":utf8, _:bytes>> -> Ok(index)
+    <<_, rest:bytes>> -> colon_index(rest, index + 1)
+    _ -> Error(Nil)
+  }
+}
+
+fn drop_leading_space(bytes: BitArray) -> BitArray {
+  case bytes {
+    <<" ":utf8, rest:bytes>> -> rest
+    _ -> bytes
+  }
+}
+
+// `bit_array.to_string` drops a byte order mark at the start of its input
+// on JavaScript, where it uses `TextDecoder`, and keeps it on Erlang. The
+// mark is read here so both targets return the same text.
+fn to_text(bytes: BitArray) -> Result(String, SseError) {
+  case bytes {
+    <<0xEF, 0xBB, 0xBF, rest:bytes>> ->
+      to_text(rest) |> result.map(fn(text) { "\u{FEFF}" <> text })
+    _ -> bit_array.to_string(bytes) |> result.replace_error(InvalidUtf8)
+  }
+}
+
+fn apply_field(
+  state: DecodeState,
+  field: String,
+  value: String,
+) -> Result(DecodeState, SseError) {
+  case field {
+    "data" ->
+      case state.data_line_count < state.limits.max_data_lines {
+        True ->
+          Ok(
+            DecodeState(
+              ..state,
+              data_lines: [value, ..state.data_lines],
+              data_line_count: state.data_line_count + 1,
+            ),
+          )
+        False -> Error(TooManyDataLines(limit: state.limits.max_data_lines))
+      }
+    "event" -> Ok(DecodeState(..state, name: Some(value)))
+    // An id that contains NUL is ignored.
+    "id" ->
+      case string.contains(value, "\u{0000}") {
+        True -> Ok(state)
+        False -> Ok(DecodeState(..state, id: Some(value)))
+      }
+    // A retry that is not all ASCII digits is ignored.
+    "retry" ->
+      case all_digits(<<value:utf8>>) && value != "" {
+        True ->
+          case int.parse(value) {
+            Ok(ms) if ms <= state.limits.max_retry_value ->
+              Ok(DecodeState(..state, retry: Some(ms)))
+            _ -> Ok(state)
+          }
+        False -> Ok(state)
+      }
+    _ -> Ok(state)
+  }
+}
+
+fn all_digits(bytes: BitArray) -> Bool {
+  case bytes {
+    <<>> -> True
+    <<digit, rest:bytes>> if digit >= 0x30 && digit <= 0x39 -> all_digits(rest)
+    _ -> False
+  }
+}
+
+// Ends the current event at a blank line. Only an event with a `data`
+// field is returned, as a browser does not dispatch one without it.
+fn dispatch(state: DecodeState) -> #(DecodeState, Option(Item)) {
+  let item = case state.data_line_count {
+    0 -> None
+    _ ->
+      Some(
+        EventItem(Event(
+          name: option.then(state.name, fn(name) {
+            name_field(clean_field(name))
+          }),
+          data: state.data_lines
+            |> list.reverse
+            |> string.join(with: "\n")
+            |> remove_nul,
+          id: state.id,
+          retry: state.retry,
+        )),
+      )
+  }
+  let next =
+    DecodeState(
+      ..new_decoder(state.limits),
+      buffer: state.buffer,
+      bom_checked: state.bom_checked,
+      skip_lf: state.skip_lf,
+    )
+  #(next, item)
+}
+
+// A line from the wire holds no CR or LF, so only NUL is left to remove.
+fn remove_nul(data: String) -> String {
+  use <- bool.guard(when: !string.contains(data, "\u{0000}"), return: data)
+  clean_data(data)
+}
+
+// Reconnecting ---------------------------------------------------------------
+
+/// What a client remembers between connections: the last `id` it saw,
+/// which it sends in the `Last-Event-ID` header, and the last `retry`.
 ///
-/// The default decoder (`decode/1`, `decode_bytes/1`) runs with a
-/// 65_536-byte cap and fails the whole stream with
-/// `Error(EventTooLarge(65_536))` for any event above that. The
-/// encoder never rejects an event for sheer size, so a 100 KB event
-/// the package's own encoder produced would be unreachable on the
-/// decode side without this override. Pair with `decode_with_limits`
-/// (or `decode_bytes_with_limits`) to raise the cap:
+/// Start from `ReconnectState(last_event_id: None, retry: None)` and give
+/// each item to `update_reconnect`. `decode` does not return a block
+/// without a `data` field, so an `id` or `retry` sent on its own does not
+/// reach this state.
 ///
-/// ```gleam
-/// let limits =
-///   ssevents.default_limits()
-///   |> ssevents.with_max_event_size(200_000)
-/// ssevents.decode_with_limits(wire, limits: limits)
-/// ```
+pub type ReconnectState {
+  ReconnectState(last_event_id: Option(String), retry: Option(Int))
+}
+
+/// Keeps the `id` and `retry` of an event, if it has them. An empty `id`
+/// sets `last_event_id` back to `None`, as a browser then sends no
+/// `Last-Event-ID`. Comments leave the state as it is.
 ///
-/// The default `decode/1` keeps the 65_536-byte ceiling as a
-/// memory-bound safety net for untrusted input. Panics on
-/// `bytes < 1`. (#96)
-pub fn with_max_event_size(limits: Limits, bytes: Int) -> Limits {
-  limit.with_max_event_size(limits, bytes)
-}
-
-pub fn max_data_lines(limits: Limits) -> Int {
-  limit.max_data_lines(limits)
-}
-
-pub fn max_retry_value(limits: Limits) -> Int {
-  limit.max_retry_value(limits)
-}
-
-/// Read the `strict_retry_cap` flag from a `Limits` value.
-///
-/// When `True`, the decoder errors with `InvalidRetry(_)` on
-/// `retry:` values above `max_retry_value`. When `False` (the
-/// default), the decoder silently drops the offending field to
-/// `None` and the surrounding event still dispatches. (#95)
-pub fn strict_retry_cap(limits: Limits) -> Bool {
-  limit.strict_retry_cap(limits)
-}
-
-/// Toggle the decoder's `retry:` cap-overrun posture.
-///
-/// `False` (the default) keeps the decoder lenient: a `retry:` value
-/// above `max_retry_value` is silently dropped to `None` and the
-/// surrounding event still dispatches, mirroring the encoder's
-/// `retry_clamp/2` and matching WHATWG SSE's lenient parser thesis.
-/// `True` re-enables the strict posture: an above-cap value fails
-/// the whole decode with `Error(InvalidRetry(_))`, so callers that
-/// want to detect adversarial retry values explicitly can do so.
-/// (#95)
-pub fn with_strict_retry_cap(limits: Limits, strict: Bool) -> Limits {
-  limit.with_strict_retry_cap(limits, strict)
-}
-
-pub fn validate_event_name(name: String) -> Result(String, SseError) {
-  validate.validate_event_name(name)
-}
-
-pub fn validate_id(id: String) -> Result(String, SseError) {
-  validate.validate_id(id)
-}
-
-pub fn validate_retry(milliseconds: Int) -> Result(Int, SseError) {
-  validate.validate_retry(milliseconds)
-}
-
-pub fn max_data_bytes(event: Event, max: Int) -> Result(Event, SseError) {
-  validate.max_data_bytes(event, max: max)
-}
-
-pub fn new_reconnect_state() -> ReconnectState {
-  reconnect.new()
-}
-
 pub fn update_reconnect(state: ReconnectState, item: Item) -> ReconnectState {
-  reconnect.update(state, item)
-}
-
-pub fn last_event_id(state: ReconnectState) -> Option(String) {
-  reconnect.last_event_id(state)
-}
-
-pub fn retry_interval(state: ReconnectState) -> Option(Int) {
-  reconnect.retry(state)
-}
-
-pub fn last_event_id_header(
-  state: ReconnectState,
-) -> Option(#(String, String)) {
-  reconnect.last_event_id_header(state)
-}
-
-pub fn empty_iterator() -> Iterator(a) {
-  stream.empty()
-}
-
-pub fn iterator_from_list(items: List(a)) -> Iterator(a) {
-  stream.from_list(items)
-}
-
-pub fn iterator_to_list(iterator: Iterator(a)) -> List(a) {
-  stream.to_list(iterator)
-}
-
-pub fn iterator_next(iterator: Iterator(a)) -> IteratorStep(a) {
-  stream.next(iterator)
-}
-
-pub fn encode_stream(items: Iterator(Item)) -> Iterator(BitArray) {
-  stream.encode_stream(items)
-}
-
-pub fn decode_stream(
-  chunks: Iterator(BitArray),
-) -> Iterator(Result(Item, SseError)) {
-  stream.decode_stream(chunks)
-}
-
-pub fn decode_stream_with_limits(
-  chunks: Iterator(BitArray),
-  limits limits: Limits,
-) -> Iterator(Result(Item, SseError)) {
-  stream.decode_stream_with_limits(chunks, limits: limits)
-}
-
-pub fn error_to_string(error: SseError) -> String {
-  error.to_string(error)
+  case item {
+    CommentItem(_) -> state
+    EventItem(event) ->
+      ReconnectState(
+        last_event_id: case event.id {
+          // An empty id resets it, and no header is sent.
+          Some("") -> None
+          Some(id) -> Some(id)
+          None -> state.last_event_id
+        },
+        retry: option.or(event.retry, state.retry),
+      )
+  }
 }

@@ -1,20 +1,18 @@
-//// Build the sequence of byte chunks an HTTP server would write to a
-//// `text/event-stream` response body. The chunks are runtime-agnostic
-//// — pipe them into the response writer of whichever framework you
-//// use (Mist, Wisp, your own).
+//// Build the chunks an HTTP server would write to a `text/event-stream`
+//// response body. Hand them to the response writer of whichever
+//// framework you use (Mist, Wisp or your own).
 ////
 ////    cd examples/server_emit
 ////    gleam run
 ////
-//// HTTP-level concerns (which the example deliberately does NOT pull
-//// in as dependencies) are documented in `examples/README.md` and
-//// echoed in the program's output.
+//// The HTTP headers are described in `examples/README.md` and printed
+//// by the program.
 
-import gleam/bit_array
 import gleam/int
 import gleam/io
 import gleam/list
-import ssevents
+import gleam/string
+import ssevents.{EventItem}
 
 pub fn main() {
   io.println("# Required HTTP response headers")
@@ -26,20 +24,10 @@ pub fn main() {
   io.println("\n# Wire chunks the server would write to the response body")
 
   let chunks = stream_chunks()
-  list.each(chunks, fn(chunk) {
-    case bit_array.to_string(chunk) {
-      Ok(text) -> io.println("--- chunk ---\n" <> text)
-      Error(_) ->
-        io.println(
-          "--- chunk (binary, "
-          <> int.to_string(bit_array.byte_size(chunk))
-          <> " bytes) ---",
-        )
-    }
-  })
+  list.each(chunks, fn(chunk) { io.println("--- chunk ---\n" <> chunk) })
 
   let total =
-    list.fold(chunks, 0, fn(acc, chunk) { acc + bit_array.byte_size(chunk) })
+    list.fold(chunks, 0, fn(acc, chunk) { acc + string.byte_size(chunk) })
   io.println(
     "\n# Total: "
     <> int.to_string(list.length(chunks))
@@ -61,32 +49,31 @@ pub fn response_headers() -> List(#(String, String)) {
   ]
 }
 
-/// One encoded `BitArray` per logical write. Each encoded item ends in
-/// a blank line, so the client decoder can dispatch as soon as the
-/// chunk lands — there is no need to coalesce writes.
-fn stream_chunks() -> List(BitArray) {
+/// One encoded chunk per write. Each event ends in a blank line, so a
+/// client dispatches it as soon as the chunk arrives.
+fn stream_chunks() -> List(String) {
   let opening = [
     ssevents.comment("stream opened"),
     ssevents.named("retry.hint", "use 5s")
       |> ssevents.retry(5000)
-      |> ssevents.event_item,
+      |> EventItem,
   ]
 
   let updates = [
     ssevents.named("job.started", "build #42")
       |> ssevents.id("cursor-1")
-      |> ssevents.event_item,
+      |> EventItem,
     ssevents.named("job.progress", "step 1/3\nrunning lints")
       |> ssevents.id("cursor-2")
-      |> ssevents.event_item,
-    ssevents.heartbeat(),
+      |> EventItem,
+    ssevents.comment("heartbeat"),
     ssevents.named("job.finished", "ok")
       |> ssevents.id("cursor-3")
-      |> ssevents.event_item,
+      |> EventItem,
   ]
 
   [
-    ssevents.encode_items_bytes(opening),
-    ..list.map(updates, ssevents.encode_item_bytes)
+    ssevents.encode_items(opening),
+    ..list.map(updates, fn(item) { ssevents.encode_items([item]) })
   ]
 }
