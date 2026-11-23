@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-23
+
 ### Changed
 
 The public API is smaller: the 10 public modules become `ssevents`, and 151 public functions become 19. Code that used the old modules needs updating.
