@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-23
+
 ### Changed
 
 The decoder now follows "Interpreting an event stream" in the WHATWG HTML standard where it did not, and the builders refuse a value they used to change. Code that builds events, matches on `Item` or calls `finish` needs updating.
