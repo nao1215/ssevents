@@ -215,6 +215,12 @@ pub fn utf8_sequences_at_the_edges_of_each_range_test() {
   let assert Ok(text) = bit_array.to_string(valid)
   decode(<<"data: a":utf8, valid:bits, "b\n\n":utf8>>)
   |> should.equal(Ok([EventItem(ssevents.new("a" <> text <> "b"))]))
+  // With an invalid byte on the same line the slow path reads them.
+  decode(<<"data: a":utf8, valid:bits, 0xFF, "b\n\n":utf8>>)
+  |> should.equal(Ok([EventItem(ssevents.new("a" <> text <> "\u{FFFD}b"))]))
+  // A continuation byte after a complete sequence starts a new one.
+  decode(<<"data: ":utf8, 0xC2, 0x80, 0x80, "\n\n":utf8>>)
+  |> should.equal(Ok([EventItem(ssevents.new("\u{0080}\u{FFFD}"))]))
   let bad = "\u{FFFD}"
   [
     #(<<0x80>>, bad),
