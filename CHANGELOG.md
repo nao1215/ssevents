@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+The decoder now follows "Interpreting an event stream" in the WHATWG HTML standard where it did not, and the builders refuse a value they used to change. Code that builds events, matches on `Item` or calls `finish` needs updating.
+
+- `named`, `id` and `comment` return `Result(_, Nil)`. They return `Error(Nil)` for a value with CR or LF, and `id` also for one with NUL, instead of removing those characters. Removing them turned a value into a different one that the client then acted on: `id("1\n2")` became the id `12`, which may name another event, and `named("admin\n", _)` reached the `admin` listeners. This is the rule multipartkit already follows for names and filenames.
+- An event at the end of the input without its closing blank line is dropped by `decode` and `finish`, as the standard and browsers drop it. It used to be returned. A stream cut off in the middle of an event no longer hands the caller an event the server had not finished.
+- `Item` has a third variant, `ReconnectItem(id:, retry:)`. `decode` and `push` return it for a block with an `id` or a `retry` but no `data`, which a browser does not dispatch but still takes the last event id and the reconnection time from, and `finish` returns it for a `retry` read in an event the input ended before. Such blocks used to be dropped, so an `id` or `retry` sent on its own never reached `ReconnectState`. `update_reconnect` reads it, and `encode_items` writes it as a block without `data`, so a server can now send a `retry` without an event. Both leave out a field of a hand-built item that `id` or `retry` would refuse, so the item cannot add lines to the stream or put a line break into `last_event_id`.
+- `finish` returns `List(Item)` instead of `Result(List(Item), SseError)`, because it can no longer fail.
+- Bytes that are not UTF-8 are read as U+FFFD, one for each maximal invalid sequence, as the UTF-8 decoder of the WHATWG Encoding standard does. The `InvalidUtf8` variant is removed. One bad byte used to fail the whole stream.
+- NUL is kept in `data`, in event names and in comments, on both decoding and building. The standard removes nothing from them; only an `id` with NUL is ignored, as before.
+
+Before:
+
+```gleam
+let event = ssevents.named("job.done", "42") |> ssevents.id(job_id)
+send(ssevents.encode(event))
+let assert Ok(rest) = ssevents.finish(decoder)
+```
+
+After:
+
+```gleam
+case ssevents.named("job.done", "42") |> result.try(ssevents.id(_, job_id)) {
+  Ok(event) -> send(ssevents.encode(event))
+  Error(Nil) -> log("job id holds a line break")
+}
+let rest = ssevents.finish(decoder)
+```
+
+### Fixed
+
+- `push` no longer counts the start of a byte order mark split across chunks as a line, so with `max_line_bytes` below 3 it no longer returns `LineTooLong` for a stream that `decode` accepts.
+- `push` scanned the whole unfinished line again for each chunk. A 20_000-byte line fed one byte at a time took 9.0 s on JavaScript and 0.84 s on Erlang, and now takes 0.16 s and 0.37 s.
+
+### Documentation
+
+- The `Limits` doc says what each value below 1 does: every limit then rejects what it bounds, the same way for `decode` and `push`.
+- doc/testing.md has a table of the rules of the standard and the tests that check each, and the mutation testing score is measured again on `src/ssevents.gleam`.
+
 ## [0.17.0] - 2026-11-23
 
 ### Changed

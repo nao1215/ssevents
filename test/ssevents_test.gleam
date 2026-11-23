@@ -1,6 +1,7 @@
 import gleeunit
 import gleeunit/should
-import ssevents.{EventTooLarge, InvalidUtf8, LineTooLong, TooManyDataLines}
+import ssevents.{EventTooLarge, LineTooLong, TooManyDataLines}
+import support
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -8,9 +9,9 @@ pub fn main() -> Nil {
 
 pub fn encode_decode_roundtrip_items_test() {
   let items = [
-    ssevents.comment("meta"),
-    ssevents.named("job.started", "hello\nworld")
-      |> ssevents.id("cursor-1")
+    support.comment("meta"),
+    support.named("job.started", "hello\nworld")
+      |> support.id("cursor-1")
       |> ssevents.retry(2000)
       |> ssevents.EventItem,
     ssevents.EventItem(ssevents.new("")),
@@ -26,8 +27,6 @@ pub fn content_type_test() {
 }
 
 pub fn error_to_string_test() {
-  ssevents.error_to_string(InvalidUtf8)
-  |> should.equal("invalid UTF-8 in SSE input")
   ssevents.error_to_string(LineTooLong(limit: 8))
   |> should.equal("line exceeds configured byte limit 8")
   ssevents.error_to_string(EventTooLarge(limit: 9))

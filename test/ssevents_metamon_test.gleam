@@ -11,6 +11,7 @@ import metamon
 import metamon/generator
 import metamon/generator/range
 import ssevents.{CommentItem, EventItem}
+import support
 
 fn decode(text: String) -> Result(List(ssevents.Item), ssevents.SseError) {
   ssevents.decode(<<text:utf8>>, ssevents.default_limits)
@@ -48,7 +49,7 @@ pub fn named_sets_name_and_data_test() -> Nil {
     generator.tuple2(safe_non_empty_text_generator(), safe_text_generator()),
     fn(pair) {
       let #(name, data) = pair
-      let evt = ssevents.named(name, data)
+      let evt = support.named(name, data)
       ssevents.name_of(evt) == Some(name) && ssevents.data_of(evt) == data
     },
   )
@@ -59,7 +60,7 @@ pub fn id_setter_round_trips_test() -> Nil {
     generator.tuple2(safe_text_generator(), safe_non_empty_text_generator()),
     fn(pair) {
       let #(data, id) = pair
-      let evt = ssevents.new(data) |> ssevents.id(id)
+      let evt = ssevents.new(data) |> support.id(id)
       ssevents.id_of(evt) == Some(id)
     },
   )
@@ -76,7 +77,7 @@ pub fn encode_then_decode_preserves_data_test() -> Nil {
       [item] ->
         case item {
           EventItem(decoded) -> ssevents.data_of(decoded) == data
-          CommentItem(_) -> False
+          _ -> False
         }
       _ -> False
     }
@@ -98,7 +99,7 @@ pub fn encode_then_decode_rewrites_only_line_terminators_test() -> Nil {
         [item] ->
           case item {
             EventItem(decoded) -> ssevents.data_of(decoded) == expected
-            CommentItem(_) -> False
+            _ -> False
           }
         _ -> False
       }
@@ -132,7 +133,7 @@ pub fn encode_then_decode_preserves_named_event_test() -> Nil {
     generator.tuple2(safe_non_empty_text_generator(), safe_text_generator()),
     fn(pair) {
       let #(name, data) = pair
-      let evt = ssevents.named(name, data)
+      let evt = support.named(name, data)
       let wire = ssevents.encode(evt)
       let assert Ok(items) = decode(wire)
       case items {
@@ -141,7 +142,7 @@ pub fn encode_then_decode_preserves_named_event_test() -> Nil {
             EventItem(decoded) ->
               ssevents.name_of(decoded) == Some(name)
               && ssevents.data_of(decoded) == data
-            CommentItem(_) -> False
+            _ -> False
           }
         _ -> False
       }
@@ -154,14 +155,14 @@ pub fn encode_then_decode_preserves_id_test() -> Nil {
     generator.tuple2(safe_text_generator(), safe_non_empty_text_generator()),
     fn(pair) {
       let #(data, id) = pair
-      let evt = ssevents.new(data) |> ssevents.id(id)
+      let evt = ssevents.new(data) |> support.id(id)
       let wire = ssevents.encode(evt)
       let assert Ok(items) = decode(wire)
       case items {
         [item] ->
           case item {
             EventItem(decoded) -> ssevents.id_of(decoded) == Some(id)
-            CommentItem(_) -> False
+            _ -> False
           }
         _ -> False
       }
@@ -184,7 +185,7 @@ pub fn encode_then_decode_preserves_retry_test() -> Nil {
         [item] ->
           case item {
             EventItem(decoded) -> ssevents.retry_of(decoded) == Some(retry_ms)
-            CommentItem(_) -> False
+            _ -> False
           }
         _ -> False
       }
@@ -207,7 +208,7 @@ pub fn encode_items_round_trip_count_test() -> Nil {
 
 pub fn comment_round_trips_through_encode_decode_test() -> Nil {
   metamon.forall(safe_non_empty_text_generator(), fn(text) {
-    let comment_item = ssevents.comment(text)
+    let comment_item = support.comment(text)
     let wire = ssevents.encode_items([comment_item])
     let assert Ok(items) = decode(wire)
     case items {

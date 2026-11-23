@@ -25,7 +25,8 @@ import gleam/bool
 import gleam/list
 import gleam/string
 import gleeunit/should
-import ssevents.{CommentItem, EventItem}
+import ssevents.{EventItem}
+import support
 
 fn decode(text: String) -> Result(List(ssevents.Item), ssevents.SseError) {
   decode_bytes(<<text:utf8>>)
@@ -51,18 +52,18 @@ fn with_crlf(wire: String) -> String {
 
 fn corpus() -> List(ssevents.Item) {
   [
-    ssevents.comment("meta"),
-    ssevents.comment(""),
+    support.comment("meta"),
+    support.comment(""),
     ssevents.new("") |> ssevents.EventItem,
     ssevents.new("hello") |> ssevents.EventItem,
     ssevents.new("line1\nline2") |> ssevents.EventItem,
     ssevents.new("line1\nline2\nline3") |> ssevents.EventItem,
-    ssevents.named("ping", "hello") |> ssevents.EventItem,
-    ssevents.named("update", "line1\nline2")
-      |> ssevents.id("cursor-1")
+    support.named("ping", "hello") |> ssevents.EventItem,
+    support.named("update", "line1\nline2")
+      |> support.id("cursor-1")
       |> ssevents.EventItem,
-    ssevents.named("update", "x")
-      |> ssevents.id("abc")
+    support.named("update", "x")
+      |> support.id("abc")
       |> ssevents.retry(2500)
       |> ssevents.EventItem,
     ssevents.new("retry only")
@@ -74,8 +75,8 @@ fn corpus() -> List(ssevents.Item) {
     ssevents.new("日本語") |> ssevents.EventItem,
     ssevents.new("emoji 🦊 fox") |> ssevents.EventItem,
     ssevents.new(string.repeat("abc", 100)) |> ssevents.EventItem,
-    ssevents.named("payload", "a\nb")
-      |> ssevents.id("x")
+    support.named("payload", "a\nb")
+      |> support.id("x")
       |> ssevents.retry(1000)
       |> ssevents.EventItem,
   ]
@@ -83,8 +84,8 @@ fn corpus() -> List(ssevents.Item) {
 
 fn small_corpus_for_split() -> List(ssevents.Item) {
   [
-    ssevents.comment("hi"),
-    ssevents.named("ping", "x") |> ssevents.EventItem,
+    support.comment("hi"),
+    support.named("ping", "x") |> ssevents.EventItem,
   ]
 }
 
@@ -167,11 +168,7 @@ fn decode_via_chunks(
 ) -> Result(List(ssevents.Item), ssevents.SseError) {
   case feed_all(ssevents.new_decoder(ssevents.default_limits), chunks, []) {
     Error(error) -> Error(error)
-    Ok(#(state, items)) ->
-      case ssevents.finish(state) {
-        Error(error) -> Error(error)
-        Ok(trailing) -> Ok(list.append(items, trailing))
-      }
+    Ok(#(state, items)) -> Ok(list.append(items, ssevents.finish(state)))
   }
 }
 
@@ -214,7 +211,7 @@ pub fn roundtrip_single_event_test() {
         let assert Ok(decoded) = decode(ssevents.encode(e))
         decoded |> should.equal([EventItem(e)])
       }
-      CommentItem(_) -> Nil
+      _ -> Nil
     }
   })
 }
@@ -223,16 +220,12 @@ pub fn roundtrip_single_event_test() {
 // Backs the corpus-level assumption used by (I4).
 pub fn comment_only_roundtrip_test() {
   let assert Ok(decoded) =
-    decode(ssevents.encode_items([ssevents.comment("hello")]))
-  decoded |> should.equal([ssevents.comment("hello")])
+    decode(ssevents.encode_items([support.comment("hello")]))
+  decoded |> should.equal([support.comment("hello")])
 }
 
-// Round-trip property for #68: for every input the smart constructor
-// accepts, `decode(encode([CommentItem(comment(s))])) ==
-// [CommentItem(comment(s))]`. Construction-time sanitisation strips
-// CR / LF / NUL, so the decoded comment compares equal to the
-// re-sanitised input — even when the caller's raw string carried
-// line breaks or NUL bytes.
+// Round trip for #68: every text `comment` accepts comes back unchanged
+// from `decode(encode_items([comment(s)]))`.
 pub fn comment_round_trip_property_corpus_test() {
   list.each(
     [
@@ -240,18 +233,14 @@ pub fn comment_round_trip_property_corpus_test() {
       "hello",
       "hello world",
       "with \u{1F600} emoji",
-      "with newline\nin middle",
-      "with CR\rin middle",
-      "with CRLF\r\nin middle",
       "with NUL\u{0000}in middle",
-      "leading newline\n",
-      "\nleading newline",
-      "all\rline\nseparators\r\nmixed",
+      ": a colon",
+      " leading space",
       "ASCII only — keep verbatim",
       "日本語のコメント",
     ],
     fn(raw) {
-      let item = ssevents.comment(raw)
+      let item = support.comment(raw)
       let assert Ok(decoded) = decode(ssevents.encode_items([item]))
       decoded |> should.equal([item])
     },
@@ -354,7 +343,6 @@ pub fn decode_empty_input_test() {
   decode("") |> should.equal(Ok([]))
   decode_bytes(<<>>) |> should.equal(Ok([]))
 
-  let assert Ok(items) =
-    ssevents.finish(ssevents.new_decoder(ssevents.default_limits))
-  items |> should.equal([])
+  ssevents.finish(ssevents.new_decoder(ssevents.default_limits))
+  |> should.equal([])
 }
