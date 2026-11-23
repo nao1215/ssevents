@@ -26,15 +26,6 @@ label_possible = "off"
 unused_exports = "off"
 
 [tools.glinter.ignore]
-"src/ssevents/decoder.gleam" = [
-  "deep_nesting",
-  "prefer_guard_clause",
-  "thrown_away_error",
-]
-"src/ssevents/event.gleam" = ["avoid_panic", "prefer_guard_clause"]
-"src/ssevents/limit.gleam" = ["avoid_panic"]
-"src/ssevents/stream.gleam" = ["deep_nesting"]
-"src/ssevents/validate.gleam" = ["avoid_panic", "prefer_guard_clause"]
 "test/**/*.gleam" = [
   "assert_ok_pattern",
   "missing_type_annotation",

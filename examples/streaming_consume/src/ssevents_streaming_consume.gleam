@@ -15,8 +15,7 @@ import gleam/int
 import gleam/io
 import gleam/list
 import gleam/option.{None, Some}
-import ssevents
-import ssevents/event.{CommentItem, EventItem}
+import ssevents.{CommentItem, EventItem, ReconnectState}
 
 pub fn main() {
   let chunks = wire_chunks()
@@ -25,7 +24,8 @@ pub fn main() {
     "feeding " <> int.to_string(list.length(chunks)) <> " chunks of input",
   )
 
-  let assert Ok(#(state, items)) = drain(ssevents.new_decoder(), chunks, [])
+  let assert Ok(#(state, items)) =
+    drain(ssevents.new_decoder(ssevents.default_limits), chunks, [])
   let assert Ok(trailing) = ssevents.finish(state)
   let all_items = list.append(items, trailing)
 
@@ -34,22 +34,19 @@ pub fn main() {
 
   io.println("\n# Reconnect metadata after the stream")
   let reconnect =
-    list.fold(all_items, ssevents.new_reconnect_state(), fn(acc, item) {
-      ssevents.update_reconnect(acc, item)
-    })
+    list.fold(
+      all_items,
+      ReconnectState(last_event_id: None, retry: None),
+      ssevents.update_reconnect,
+    )
 
-  case ssevents.last_event_id(reconnect) {
-    Some(id) -> io.println("- last event id: " <> id)
-    None -> io.println("- last event id: (none)")
+  case reconnect.last_event_id {
+    Some(id) -> io.println("- send on reconnect: Last-Event-ID: " <> id)
+    None -> io.println("- send on reconnect: (no header, first connect)")
   }
-  case ssevents.retry_interval(reconnect) {
+  case reconnect.retry {
     Some(ms) -> io.println("- retry interval: " <> int.to_string(ms) <> "ms")
-    None -> io.println("- retry interval: (none — keep client default)")
-  }
-  case ssevents.last_event_id_header(reconnect) {
-    Some(#(header, value)) ->
-      io.println("- send on reconnect: " <> header <> ": " <> value)
-    None -> io.println("- send on reconnect: (no header — first connect)")
+    None -> io.println("- retry interval: (none, keep the client default)")
   }
 }
 
@@ -102,7 +99,7 @@ fn describe(item: ssevents.Item) -> Nil {
       }
       io.println("- event " <> name <> id <> ": " <> describe_data(event))
     }
-    CommentItem(c) -> io.println("- comment: " <> event.comment_text_of(c))
+    CommentItem(c) -> io.println("- comment: " <> ssevents.comment_text(c))
   }
 }
 

@@ -2,15 +2,18 @@ import gleam/bit_array
 import gleam/list
 import gleam/option.{None, Some}
 import gleeunit/should
-import ssevents
-import ssevents/error.{
-  EventTooLarge, InvalidRetry, InvalidUtf8, LineTooLong, TooManyDataLines,
+import ssevents.{
+  CommentItem, EventItem, EventTooLarge, InvalidUtf8, LineTooLong,
+  TooManyDataLines,
 }
-import ssevents/event.{CommentItem, EventItem}
+
+fn decode(text: String) -> Result(List(ssevents.Item), ssevents.SseError) {
+  ssevents.decode(<<text:utf8>>, ssevents.default_limits)
+}
 
 pub fn decode_simple_event_test() {
   let assert Ok([EventItem(event)]) =
-    ssevents.decode("event: ping\ndata: hello\nid: 1\nretry: 1000\n\n")
+    decode("event: ping\ndata: hello\nid: 1\nretry: 1000\n\n")
 
   ssevents.name_of(event) |> should.equal(Some("ping"))
   ssevents.data_of(event) |> should.equal("hello")
@@ -19,41 +22,16 @@ pub fn decode_simple_event_test() {
 }
 
 pub fn decode_comment_and_event_test() {
-  let assert Ok(items) = ssevents.decode(": hello\ndata: world\n\n")
+  let assert Ok(items) = decode(": hello\ndata: world\n\n")
   items
   |> should.equal([
-    CommentItem(event.comment("hello")),
+    ssevents.comment("hello"),
     EventItem(ssevents.new("world")),
   ])
 }
 
-pub fn decode_bytes_matches_string_decode_test() {
-  let input = ": hello\ndata: world\n\n"
-
-  ssevents.decode_bytes(bit_array.from_string(input))
-  |> should.equal(ssevents.decode(input))
-}
-
-pub fn decode_bytes_with_limits_matches_string_decode_test() {
-  let limits =
-    ssevents.new_limits(
-      max_line_bytes: 100,
-      max_event_bytes: 100,
-      max_data_lines: 10,
-      max_retry_value: 1000,
-    )
-  let input = "event: ping\ndata: hello\n\n"
-
-  ssevents.decode_bytes_with_limits(
-    bit_array.from_string(input),
-    limits: limits,
-  )
-  |> should.equal(ssevents.decode_with_limits(input, limits: limits))
-}
-
 pub fn decode_unknown_fields_are_ignored_test() {
-  let assert Ok([EventItem(event)]) =
-    ssevents.decode("foo: bar\ndata: ok\nanother\n\n")
+  let assert Ok([EventItem(event)]) = decode("foo: bar\ndata: ok\nanother\n\n")
 
   ssevents.data_of(event) |> should.equal("ok")
   ssevents.name_of(event) |> should.equal(None)
@@ -61,14 +39,14 @@ pub fn decode_unknown_fields_are_ignored_test() {
 
 pub fn decode_crlf_test() {
   let assert Ok([EventItem(event)]) =
-    ssevents.decode("event: ping\r\ndata: hello\r\n\r\n")
+    decode("event: ping\r\ndata: hello\r\n\r\n")
 
   ssevents.name_of(event) |> should.equal(Some("ping"))
   ssevents.data_of(event) |> should.equal("hello")
 }
 
 pub fn decode_final_unterminated_event_is_dispatched_test() {
-  let assert Ok([EventItem(event)]) = ssevents.decode("data: tail")
+  let assert Ok([EventItem(event)]) = decode("data: tail")
   ssevents.data_of(event) |> should.equal("tail")
 }
 
@@ -78,11 +56,11 @@ pub fn decode_retry_only_block_does_not_dispatch_test() {
   // data buffer is what gates dispatch: a retry-only block mutates the
   // user agent's reconnection-time state but does NOT dispatch. The
   // decoder now mirrors the spec and emits an empty list.
-  ssevents.decode("retry: 1500\n\n") |> should.equal(Ok([]))
+  decode("retry: 1500\n\n") |> should.equal(Ok([]))
 }
 
 pub fn decode_empty_data_event_test() {
-  let assert Ok([EventItem(event)]) = ssevents.decode("data:\n\n")
+  let assert Ok([EventItem(event)]) = decode("data:\n\n")
   ssevents.data_of(event) |> should.equal("")
 }
 
@@ -91,65 +69,65 @@ pub fn decode_invalid_retry_test() {
   // is silently ignored. The only field on this event is the bad
   // retry, so the event has no `data:` and is not dispatched at all
   // — an empty list is the expected result.
-  ssevents.decode("retry: nope\n\n")
+  decode("retry: nope\n\n")
   |> should.equal(Ok([]))
 }
 
 pub fn decode_bytes_invalid_utf8_in_field_name_test() {
-  ssevents.decode_bytes(<<255, 58, 32, 120, 10, 10>>)
+  ssevents.decode(<<255, 58, 32, 120, 10, 10>>, ssevents.default_limits)
   |> should.equal(Error(InvalidUtf8))
 }
 
 pub fn decode_bytes_invalid_utf8_in_field_value_test() {
-  ssevents.decode_bytes(<<100, 97, 116, 97, 58, 32, 255, 10, 10>>)
+  ssevents.decode(
+    <<100, 97, 116, 97, 58, 32, 255, 10, 10>>,
+    ssevents.default_limits,
+  )
   |> should.equal(Error(InvalidUtf8))
 }
 
 pub fn decode_line_too_long_test() {
   let limits =
-    ssevents.new_limits(
+    ssevents.Limits(
       max_line_bytes: 4,
       max_event_bytes: 100,
       max_data_lines: 10,
       max_retry_value: 1000,
     )
 
-  ssevents.decode_with_limits("data: hello\n\n", limits: limits)
+  ssevents.decode(<<"data: hello\n\n":utf8>>, limits)
   |> should.equal(Error(LineTooLong(4)))
 }
 
 pub fn decode_event_too_large_test() {
   let limits =
-    ssevents.new_limits(
+    ssevents.Limits(
       max_line_bytes: 100,
       max_event_bytes: 8,
       max_data_lines: 10,
       max_retry_value: 1000,
     )
 
-  ssevents.decode_with_limits("data: hello\n\n", limits: limits)
+  ssevents.decode(<<"data: hello\n\n":utf8>>, limits)
   |> should.equal(Error(EventTooLarge(8)))
 }
 
 pub fn decode_too_many_data_lines_test() {
   let limits =
-    ssevents.new_limits(
+    ssevents.Limits(
       max_line_bytes: 100,
       max_event_bytes: 100,
       max_data_lines: 2,
       max_retry_value: 1000,
     )
 
-  ssevents.decode_bytes_with_limits(
-    <<"data: 1\ndata: 2\ndata: 3\n\n":utf8>>,
-    limits: limits,
-  )
+  ssevents.decode(<<"data: 1\ndata: 2\ndata: 3\n\n":utf8>>, limits)
   |> should.equal(Error(TooManyDataLines(2)))
 }
 
 pub fn decode_max_data_lines_boundary_test() {
   let limits =
-    ssevents.new_limits(
+    ssevents.Limits(
       max_line_bytes: 100,
       max_event_bytes: 100,
       max_data_lines: 2,
@@ -157,16 +135,13 @@ pub fn decode_max_data_lines_boundary_test() {
     )
 
   let assert Ok([EventItem(event)]) =
-    ssevents.decode_bytes_with_limits(
-      <<"data: 1\ndata: 2\n\n":utf8>>,
-      limits: limits,
-    )
+    ssevents.decode(<<"data: 1\ndata: 2\n\n":utf8>>, limits)
 
   ssevents.data_of(event) |> should.equal("1\n2")
 }
 
 pub fn incremental_push_handles_partial_chunks_test() {
-  let state = ssevents.new_decoder()
+  let state = ssevents.new_decoder(ssevents.default_limits)
   let assert Ok(#(state, items1)) =
     state |> ssevents.push(bit_array.from_string("data: hel"))
   items1 |> should.equal([])
@@ -186,7 +161,7 @@ pub fn incremental_push_handles_split_utf8_test() {
     bit_array.slice(from: full, at: 8, take: bit_array.byte_size(full) - 8)
 
   let assert Ok(#(state, items1)) =
-    ssevents.push(ssevents.new_decoder(), chunk1)
+    ssevents.push(ssevents.new_decoder(ssevents.default_limits), chunk1)
   items1 |> should.equal([])
 
   let assert Ok(#(_state, items2)) = ssevents.push(state, chunk2)
@@ -194,7 +169,7 @@ pub fn incremental_push_handles_split_utf8_test() {
 }
 
 pub fn incremental_push_invalid_utf8_returns_error_without_advancing_test() {
-  let state = ssevents.new_decoder()
+  let state = ssevents.new_decoder(ssevents.default_limits)
 
   ssevents.push(state, <<100, 97, 116, 97, 58, 32, 255, 10>>)
   |> should.equal(Error(InvalidUtf8))
@@ -204,7 +179,7 @@ pub fn incremental_push_invalid_utf8_returns_error_without_advancing_test() {
 }
 
 pub fn incremental_push_handles_crlf_split_across_chunks_test() {
-  let state = ssevents.new_decoder()
+  let state = ssevents.new_decoder(ssevents.default_limits)
   let assert Ok(#(state, items1)) =
     ssevents.push(state, <<"data: hello\r":utf8>>)
   items1 |> should.equal([])
@@ -223,7 +198,7 @@ pub fn incremental_push_handles_crlf_with_one_byte_chunks_test() {
     |> bytes_to_single_byte_chunks
 
   let assert Ok(#(state, items)) =
-    push_chunks(ssevents.new_decoder(), chunks, [])
+    push_chunks(ssevents.new_decoder(ssevents.default_limits), chunks, [])
   items |> should.equal([EventItem(ssevents.new("hello\nworld"))])
 
   let assert Ok(trailing) = ssevents.finish(state)
@@ -236,7 +211,7 @@ pub fn incremental_push_handles_crlf_with_one_byte_chunks_test() {
 
 pub fn decode_bytes_strips_leading_bom_test() {
   let body = <<0xEF, 0xBB, 0xBF, "data: hello\n\n":utf8>>
-  let assert Ok(items) = ssevents.decode_bytes(body)
+  let assert Ok(items) = ssevents.decode(body, ssevents.default_limits)
   items |> should.equal([EventItem(ssevents.new("hello"))])
 }
 
@@ -246,7 +221,8 @@ pub fn decode_bytes_only_strips_one_bom_test() {
   // lines are decoded as UTF-8 strings, so a stray BOM mid-data
   // becomes a U+FEFF character in the data value.
   let body = <<0xEF, 0xBB, 0xBF, "data: ":utf8, 0xEF, 0xBB, 0xBF, "x\n\n":utf8>>
-  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode(body, ssevents.default_limits)
   ssevents.data_of(event) |> should.equal("\u{FEFF}x")
 }
 
@@ -254,7 +230,7 @@ pub fn decode_bytes_no_bom_unchanged_test() {
   // Baseline: a stream that does not start with the BOM byte
   // sequence (`EF BB BF`) decodes the same way it always did.
   let body = <<"data: hello\n\n":utf8>>
-  let assert Ok(items) = ssevents.decode_bytes(body)
+  let assert Ok(items) = ssevents.decode(body, ssevents.default_limits)
   items |> should.equal([EventItem(ssevents.new("hello"))])
 }
 
@@ -266,28 +242,31 @@ pub fn decode_lone_cr_line_separator_test() {
   // but with lone-CR terminators. Should yield one event with data
   // "a\nb" (multi-line data lines join with LF per §9.2.6).
   let body = <<"data: a\rdata: b\r\r":utf8>>
-  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode(body, ssevents.default_limits)
   ssevents.data_of(event) |> should.equal("a\nb")
 }
 
 pub fn decode_lone_cr_terminates_event_test() {
   // Single event terminated by `\r\r` (blank line via lone CR).
   let body = <<"data: hello\r\r":utf8>>
-  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode(body, ssevents.default_limits)
   ssevents.data_of(event) |> should.equal("hello")
 }
 
 pub fn decode_mixed_lone_cr_and_lf_test() {
   // Mixed terminators in the same stream are legal per §9.2.5.
   let body = <<"data: a\rdata: b\ndata: c\r\n\r":utf8>>
-  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode(body, ssevents.default_limits)
   ssevents.data_of(event) |> should.equal("a\nb\nc")
 }
 
 pub fn finish_with_trailing_lone_cr_test() {
   // A buffer ending in CR with nothing after is a lone-CR terminator
   // at finish time (no more bytes are coming).
-  let state = ssevents.new_decoder()
+  let state = ssevents.new_decoder(ssevents.default_limits)
   let assert Ok(#(state, items1)) =
     ssevents.push(state, <<"data: hello\r":utf8>>)
   // CR-at-end is ambiguous mid-stream, so push doesn't emit yet.
@@ -303,7 +282,8 @@ pub fn finish_with_trailing_lone_cr_test() {
 
 pub fn decode_retry_decimal_is_silently_ignored_test() {
   let body = <<"retry: 12.5\ndata: ping\n\n":utf8>>
-  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode(body, ssevents.default_limits)
   ssevents.retry_of(event) |> should.equal(None)
   ssevents.data_of(event) |> should.equal("ping")
 }
@@ -312,7 +292,8 @@ pub fn decode_retry_negative_is_silently_ignored_test() {
   // Per WHATWG, "ASCII digits" excludes the `-` character — negative
   // values must be ignored.
   let body = <<"retry: -100\ndata: ping\n\n":utf8>>
-  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode(body, ssevents.default_limits)
   ssevents.retry_of(event) |> should.equal(None)
   ssevents.data_of(event) |> should.equal("ping")
 }
@@ -320,14 +301,16 @@ pub fn decode_retry_negative_is_silently_ignored_test() {
 pub fn decode_retry_empty_is_silently_ignored_test() {
   // Zero ASCII digits is not "only ASCII digits" — ignore.
   let body = <<"retry: \ndata: ping\n\n":utf8>>
-  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode(body, ssevents.default_limits)
   ssevents.retry_of(event) |> should.equal(None)
   ssevents.data_of(event) |> should.equal("ping")
 }
 
 pub fn decode_retry_alpha_is_silently_ignored_test() {
   let body = <<"retry: abc\ndata: ping\n\n":utf8>>
-  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode(body, ssevents.default_limits)
   ssevents.retry_of(event) |> should.equal(None)
   ssevents.data_of(event) |> should.equal("ping")
 }
@@ -335,23 +318,20 @@ pub fn decode_retry_alpha_is_silently_ignored_test() {
 pub fn decode_retry_within_limit_still_set_test() {
   // Baseline: an all-digits value within the safety limit is still
   // applied.
-  let assert Ok([EventItem(event)]) =
-    ssevents.decode("retry: 1500\ndata: payload\n\n")
+  let assert Ok([EventItem(event)]) = decode("retry: 1500\ndata: payload\n\n")
   ssevents.retry_of(event) |> should.equal(Some(1500))
 }
 
-pub fn decode_retry_above_limit_under_strict_mode_errors_test() {
-  // The `max_retry_value` safety bound is a per-decoder limit, not a
-  // spec rule. Under `with_strict_retry_cap(_, True)` an above-limit
-  // value still surfaces as `InvalidRetry(_)` so callers that need
-  // to detect adversarial input can opt in. The default limit is
-  // 86_400_000 ms (one day); 99_999_999_999 is well above. (#95)
-  let limits = ssevents.default_limits() |> ssevents.with_strict_retry_cap(True)
-  ssevents.decode_bytes_with_limits(
-    <<"retry: 99999999999\ndata: ping\n\n":utf8>>,
-    limits: limits,
-  )
-  |> should.equal(Error(InvalidRetry("99999999999")))
+pub fn decode_retry_above_limit_is_ignored_test() {
+  // `max_retry_value` bounds the decoder, not the format: a larger value
+  // is ignored and the event is still returned.
+  let limits = ssevents.Limits(..ssevents.default_limits, max_retry_value: 1000)
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode(<<"retry: 1001\ndata: ping\n\n":utf8>>, limits)
+  ssevents.retry_of(event) |> should.equal(None)
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode(<<"retry: 1000\ndata: ping\n\n":utf8>>, limits)
+  ssevents.retry_of(event) |> should.equal(Some(1000))
 }
 
 // WHATWG SSE §9.2.6: id with NUL must be silently ignored, not error.
@@ -359,7 +339,8 @@ pub fn decode_retry_above_limit_under_strict_mode_errors_test() {
 
 pub fn decode_id_with_nul_is_silently_ignored_test() {
   let body = <<"id: be\u{0000}fore\ndata: payload\n\n":utf8>>
-  let assert Ok([EventItem(event)]) = ssevents.decode_bytes(body)
+  let assert Ok([EventItem(event)]) =
+    ssevents.decode(body, ssevents.default_limits)
   // The event dispatched, but the id field was dropped.
   ssevents.id_of(event) |> should.equal(None)
   ssevents.data_of(event) |> should.equal("payload")
@@ -367,8 +348,7 @@ pub fn decode_id_with_nul_is_silently_ignored_test() {
 
 pub fn decode_id_without_nul_still_set_test() {
   // Baseline: a clean id is still applied.
-  let assert Ok([EventItem(event)]) =
-    ssevents.decode("id: clean\ndata: payload\n\n")
+  let assert Ok([EventItem(event)]) = decode("id: clean\ndata: payload\n\n")
   ssevents.id_of(event) |> should.equal(Some("clean"))
 }
 
@@ -381,14 +361,14 @@ pub fn decode_id_with_lf_is_silently_ignored_test() {
   // (CR / LF inside the value never reach the decoder via well-formed
   // wire input because they would terminate the line first; this
   // test asserts the behaviour at the validate boundary.)
-  let assert Ok(items) = ssevents.decode("data: payload\n\n")
+  let assert Ok(items) = decode("data: payload\n\n")
   list.length(items) |> should.equal(1)
 }
 
 pub fn incremental_push_strips_bom_split_across_chunks_test() {
   // Push the BOM bytes one at a time, then the rest. The decoder
   // should still strip the full BOM and emit one event.
-  let state = ssevents.new_decoder()
+  let state = ssevents.new_decoder(ssevents.default_limits)
   let assert Ok(#(state, items1)) = ssevents.push(state, <<0xEF>>)
   items1 |> should.equal([])
   let assert Ok(#(state, items2)) = ssevents.push(state, <<0xBB>>)
@@ -445,7 +425,7 @@ pub fn decode_preserves_combining_mark_after_leading_space_test() {
   // combining-mark` grapheme cluster instead of the single
   // U+0020 byte.
   let wire = "event: \u{1B00}X\ndata: x\n\n"
-  let assert Ok([EventItem(decoded)]) = ssevents.decode(wire)
+  let assert Ok([EventItem(decoded)]) = decode(wire)
   ssevents.name_of(decoded) |> should.equal(Some("\u{1B00}X"))
   ssevents.data_of(decoded) |> should.equal("x")
 }
@@ -458,7 +438,7 @@ pub fn decode_preserves_combining_acute_after_leading_space_test() {
   // a trailing `data: x` to keep the combining-mark assertion
   // reachable.
   let wire = "event: \u{0301}E\ndata: x\n\n"
-  let assert Ok([EventItem(decoded)]) = ssevents.decode(wire)
+  let assert Ok([EventItem(decoded)]) = decode(wire)
   ssevents.name_of(decoded) |> should.equal(Some("\u{0301}E"))
 }
 
@@ -466,13 +446,13 @@ pub fn decode_comment_preserves_combining_mark_after_leading_space_test() {
   // `decode_comment_text` shares the same trim helper, so the same
   // bug surfaced for comments.
   let wire = ": \u{1B00}note\n\n"
-  let assert Ok([CommentItem(c)]) = ssevents.decode(wire)
-  event.comment_text_of(c) |> should.equal("\u{1B00}note")
+  let assert Ok([CommentItem(c)]) = decode(wire)
+  ssevents.comment_text(c) |> should.equal("\u{1B00}note")
 }
 
 pub fn decode_id_preserves_combining_mark_after_leading_space_test() {
   let wire = "id: \u{0301}1\ndata: x\n\n"
-  let assert Ok([EventItem(decoded)]) = ssevents.decode(wire)
+  let assert Ok([EventItem(decoded)]) = decode(wire)
   ssevents.id_of(decoded) |> should.equal(Some("\u{0301}1"))
 }
 
@@ -483,7 +463,7 @@ pub fn decode_preserves_bom_after_leading_space_test() {
   // `TextDecoder` defaults to `ignoreBOM: false`. The codepoint-
   // based trim preserves it.
   let wire = "data: \u{FEFF}x\n\n"
-  let assert Ok([EventItem(decoded)]) = ssevents.decode(wire)
+  let assert Ok([EventItem(decoded)]) = decode(wire)
   ssevents.data_of(decoded) |> should.equal("\u{FEFF}x")
 }
 
@@ -492,17 +472,17 @@ pub fn pending_cr_does_not_count_towards_max_line_bytes_test() {
   // the CR in its buffer. It is a line terminator either way and must not
   // push a line of exactly `max_line_bytes` over the limit.
   let limits =
-    ssevents.new_limits(
+    ssevents.Limits(
       max_line_bytes: 10,
       max_event_bytes: 65_536,
       max_data_lines: 1024,
       max_retry_value: 86_400_000,
     )
   let wire = "data: abcd\r\ndata: efgh\r\r\n"
-  let one_shot = ssevents.decode_with_limits(wire, limits: limits)
+  let one_shot = ssevents.decode(<<wire:utf8>>, limits)
   one_shot |> should.be_ok
   let assert Ok(#(state, first)) =
-    ssevents.push(ssevents.new_decoder_with_limits(limits), <<
+    ssevents.push(ssevents.new_decoder(limits), <<
       "data: abcd\r":utf8,
     >>)
   let assert Ok(#(state, second)) =
@@ -512,8 +492,36 @@ pub fn pending_cr_does_not_count_towards_max_line_bytes_test() {
   Ok(list.flatten([first, second, third, rest])) |> should.equal(one_shot)
 
   // One byte more is still rejected, with or without the pending CR.
-  ssevents.push(ssevents.new_decoder_with_limits(limits), <<
+  ssevents.push(ssevents.new_decoder(limits), <<
     "data: abcde\r":utf8,
   >>)
   |> should.equal(Error(LineTooLong(10)))
+}
+
+pub fn decode_keeps_byte_order_mark_at_start_of_later_line_test() {
+  // Only the mark at the very start of the stream is skipped. A later
+  // line that starts with one names the field "\u{FEFF}data", which is
+  // unknown. JavaScript used to drop the mark and read a second event.
+  decode("data: a\n\n\u{FEFF}data: b\n\n")
+  |> should.equal(Ok([EventItem(ssevents.new("a"))]))
+}
+
+pub fn decode_keeps_byte_order_mark_right_after_colon_test() {
+  // JavaScript used to drop a mark that started the field value.
+  decode("data:\u{FEFF}x\n\n")
+  |> should.equal(Ok([EventItem(ssevents.new("\u{FEFF}x"))]))
+  decode(":\u{FEFF}note\n")
+  |> should.equal(Ok([ssevents.comment("\u{FEFF}note")]))
+}
+
+pub fn decode_removes_nul_from_event_name_test() {
+  // The event name has no NUL rule, so the field is kept with the NUL
+  // removed, as `named` does. It used to fail the whole stream.
+  let assert Ok([EventItem(event)]) = decode("event: a\u{0000}b\ndata: x\n\n")
+  ssevents.name_of(event) |> should.equal(Some("ab"))
+}
+
+pub fn decode_removes_nul_from_data_test() {
+  decode("data: a\u{0000}b\n\n")
+  |> should.equal(Ok([EventItem(ssevents.new("ab"))]))
 }

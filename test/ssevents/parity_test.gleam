@@ -1,67 +1,51 @@
-//// Cross-target parity and chunk-boundary tests for `ssevents`.
+//// Chunk-boundary and line-ending parity tests for `ssevents`, on both
+//// targets.
 ////
-//// These tests are framed as "documented invariants" so that future
-//// contributors know exactly what must stay stable across releases
-//// and across the Erlang and JavaScript targets. Each test function
-//// is tagged with the invariant(s) it asserts.
+//// (I3) `encode_items` is concatenation: `encode_items(xs)` equals the
+////      concatenation of `encode_items([x])` for each item.
 ////
-//// Invariants protected by this file:
+//// (I4) Round trip: `decode(encode_items(xs))` equals `Ok(xs)` for every
+////      corpus list `xs`.
 ////
-//// (I1) String/Bytes mirror — encode:
-////      `encode_bytes(e)` equals `bit_array.from_string(encode(e))`.
-////      Same for `encode_item` / `encode_item_bytes` and
-////      `encode_items` / `encode_items_bytes`.
+//// (I5) Line-ending parity: the same wire with CRLF in place of every LF
+////      decodes to the same items.
 ////
-//// (I2) String/Bytes mirror — decode:
-////      `decode_bytes(bit_array.from_string(s))` equals `decode(s)`.
+//// (I6) Chunk-boundary parity: feeding an encoded stream through `push`
+////      in fixed-size chunks and then `finish` yields the same items as
+////      `decode` on the whole input.
 ////
-//// (I3) `encode_items` is concatenation:
-////      `encode_items(xs)` equals `string.concat(map(xs, encode_item))`,
-////      and `encode_items_bytes(xs)` equals
-////      `bit_array.concat(map(xs, encode_item_bytes))`. Holds for both
-////      `Lf` and `Crlf` line endings.
+//// (I7) Every-split parity, the strong form of I6: for every split
+////      position, the two-chunk feed yields the same items as `decode`.
 ////
-//// (I4) Round-trip:
-////      `decode(encode_items(xs))` equals `Ok(xs)` for every corpus
-////      list `xs`. Multi-line `Comment` items are deliberately
-////      excluded from the corpus because the encoder splits a
-////      comment containing `\n` into multiple `:` lines, which the
-////      decoder reads back as multiple `Comment` items.
-////
-//// (I5) Line-ending parity:
-////      `decode(encode_items_with_line_ending(xs, Lf))` equals
-////      `decode(encode_items_with_line_ending(xs, Crlf))`. The wire
-////      bytes differ; the decoded item list does not.
-////
-//// (I6) Chunk-boundary parity (parameterised):
-////      Feeding an encoded byte string through `push` in
-////      fixed-size chunks then `finish` yields the same items as
-////      `decode_bytes` on the whole input.
-////
-//// (I7) Every-split parity (the strong form of I6):
-////      For every split position `i` in `0..byte_size(bs)`, the
-////      two-chunk feed `[prefix, suffix]` followed by `finish`
-////      yields the same items as `decode_bytes(bs)`. Run on a
-////      small payload to keep test time bounded.
-////
-//// (I8) Empty-input invariant:
-////      `decode("")`, `decode_bytes(<<>>)`, and
-////      `finish(new_decoder())` all return `Ok([])`.
-////
-//// UTF-8 error-path parity and limit-error parity (LineTooLong,
-//// EventTooLarge, TooManyDataLines, InvalidRetry) across targets are
-//// already covered by the existing `decoder_test` and `limit_test`
-//// suites; this file is focused on happy-path semantic equivalence.
+//// (I8) Empty input: `decode(<<>>)` and `finish(new_decoder(_))` return
+////      `Ok([])`.
 
 import gleam/bit_array
 import gleam/bool
 import gleam/list
-import gleam/option.{Some}
 import gleam/string
 import gleeunit/should
-import ssevents
-import ssevents/encoder
-import ssevents/event.{CommentItem, EventItem}
+import ssevents.{CommentItem, EventItem}
+
+fn decode(text: String) -> Result(List(ssevents.Item), ssevents.SseError) {
+  decode_bytes(<<text:utf8>>)
+}
+
+fn decode_bytes(
+  bytes: BitArray,
+) -> Result(List(ssevents.Item), ssevents.SseError) {
+  ssevents.decode(bytes, ssevents.default_limits)
+}
+
+fn encode_bytes(items: List(ssevents.Item)) -> BitArray {
+  <<ssevents.encode_items(items):utf8>>
+}
+
+/// The same wire with every LF line ending written as CRLF. The encoder
+/// writes no CR, so every LF in its output ends a line.
+fn with_crlf(wire: String) -> String {
+  string.replace(in: wire, each: "\n", with: "\r\n")
+}
 
 // ====== Corpus =============================================================
 
@@ -69,41 +53,38 @@ fn corpus() -> List(ssevents.Item) {
   [
     ssevents.comment("meta"),
     ssevents.comment(""),
-    ssevents.new("") |> ssevents.event_item,
-    ssevents.new("hello") |> ssevents.event_item,
-    ssevents.new("line1\nline2") |> ssevents.event_item,
-    ssevents.new("line1\nline2\nline3") |> ssevents.event_item,
-    ssevents.named("ping", "hello") |> ssevents.event_item,
+    ssevents.new("") |> ssevents.EventItem,
+    ssevents.new("hello") |> ssevents.EventItem,
+    ssevents.new("line1\nline2") |> ssevents.EventItem,
+    ssevents.new("line1\nline2\nline3") |> ssevents.EventItem,
+    ssevents.named("ping", "hello") |> ssevents.EventItem,
     ssevents.named("update", "line1\nline2")
       |> ssevents.id("cursor-1")
-      |> ssevents.event_item,
-    ssevents.from_parts(
-      event_name: Some("update"),
-      data: "x",
-      id: Some("abc"),
-      retry: Some(2500),
-    )
-      |> ssevents.event_item,
+      |> ssevents.EventItem,
+    ssevents.named("update", "x")
+      |> ssevents.id("abc")
+      |> ssevents.retry(2500)
+      |> ssevents.EventItem,
     ssevents.new("retry only")
       |> ssevents.retry(1500)
-      |> ssevents.event_item,
+      |> ssevents.EventItem,
     ssevents.new("retry near max")
       |> ssevents.retry(86_399_999)
-      |> ssevents.event_item,
-    ssevents.new("日本語") |> ssevents.event_item,
-    ssevents.new("emoji 🦊 fox") |> ssevents.event_item,
-    ssevents.new(string.repeat("abc", 100)) |> ssevents.event_item,
+      |> ssevents.EventItem,
+    ssevents.new("日本語") |> ssevents.EventItem,
+    ssevents.new("emoji 🦊 fox") |> ssevents.EventItem,
+    ssevents.new(string.repeat("abc", 100)) |> ssevents.EventItem,
     ssevents.named("payload", "a\nb")
       |> ssevents.id("x")
       |> ssevents.retry(1000)
-      |> ssevents.event_item,
+      |> ssevents.EventItem,
   ]
 }
 
 fn small_corpus_for_split() -> List(ssevents.Item) {
   [
     ssevents.comment("hi"),
-    ssevents.named("ping", "x") |> ssevents.event_item,
+    ssevents.named("ping", "x") |> ssevents.EventItem,
   ]
 }
 
@@ -184,7 +165,7 @@ fn feed_all(
 fn decode_via_chunks(
   chunks: List(BitArray),
 ) -> Result(List(ssevents.Item), ssevents.SseError) {
-  case feed_all(ssevents.new_decoder(), chunks, []) {
+  case feed_all(ssevents.new_decoder(ssevents.default_limits), chunks, []) {
     Error(error) -> Error(error)
     Ok(#(state, items)) ->
       case ssevents.finish(state) {
@@ -220,33 +201,8 @@ fn for_each_items(
 // (I4)
 pub fn roundtrip_decode_encode_items_test() {
   for_each_items(corpus(), fn(xs) {
-    ssevents.decode(ssevents.encode_items(xs))
+    decode(ssevents.encode_items(xs))
     |> should.equal(Ok(xs))
-  })
-}
-
-// (I1, I2)
-pub fn roundtrip_bytes_matches_string_test() {
-  for_each_items(corpus(), fn(xs) {
-    ssevents.decode_bytes(ssevents.encode_items_bytes(xs))
-    |> should.equal(ssevents.decode(ssevents.encode_items(xs)))
-  })
-}
-
-// (I1)
-pub fn encode_items_bytes_equals_from_string_test() {
-  for_each_items(corpus(), fn(xs) {
-    ssevents.encode_items_bytes(xs)
-    |> should.equal(bit_array.from_string(ssevents.encode_items(xs)))
-  })
-}
-
-// (I2)
-pub fn decode_bytes_equals_decode_string_test() {
-  for_each_items(corpus(), fn(xs) {
-    let encoded = ssevents.encode_items(xs)
-    ssevents.decode_bytes(bit_array.from_string(encoded))
-    |> should.equal(ssevents.decode(encoded))
   })
 }
 
@@ -255,21 +211,9 @@ pub fn roundtrip_single_event_test() {
   list.each(corpus(), fn(item) {
     case item {
       EventItem(e) -> {
-        let assert Ok(decoded) = ssevents.decode(ssevents.encode(e))
+        let assert Ok(decoded) = decode(ssevents.encode(e))
         decoded |> should.equal([EventItem(e)])
       }
-      CommentItem(_) -> Nil
-    }
-  })
-}
-
-// (I1) Single-event variant of the bytes-mirror property.
-pub fn encode_bytes_equals_from_string_for_event_test() {
-  list.each(corpus(), fn(item) {
-    case item {
-      EventItem(e) ->
-        ssevents.encode_bytes(e)
-        |> should.equal(bit_array.from_string(ssevents.encode(e)))
       CommentItem(_) -> Nil
     }
   })
@@ -279,8 +223,8 @@ pub fn encode_bytes_equals_from_string_for_event_test() {
 // Backs the corpus-level assumption used by (I4).
 pub fn comment_only_roundtrip_test() {
   let assert Ok(decoded) =
-    ssevents.decode(ssevents.encode_item(CommentItem(event.comment("hello"))))
-  decoded |> should.equal([CommentItem(event.comment("hello"))])
+    decode(ssevents.encode_items([ssevents.comment("hello")]))
+  decoded |> should.equal([ssevents.comment("hello")])
 }
 
 // Round-trip property for #68: for every input the smart constructor
@@ -307,8 +251,8 @@ pub fn comment_round_trip_property_corpus_test() {
       "日本語のコメント",
     ],
     fn(raw) {
-      let item = CommentItem(event.comment(raw))
-      let assert Ok(decoded) = ssevents.decode(ssevents.encode_item(item))
+      let item = ssevents.comment(raw)
+      let assert Ok(decoded) = decode(ssevents.encode_items([item]))
       decoded |> should.equal([item])
     },
   )
@@ -319,10 +263,10 @@ pub fn comment_round_trip_property_corpus_test() {
 // (I6) Chunked decode equals one-shot decode for several chunk sizes.
 pub fn chunked_decode_matches_full_decode_test() {
   for_each_items(corpus(), fn(xs) {
-    let bs = ssevents.encode_items_bytes(xs)
+    let bs = encode_bytes(xs)
     let total = bit_array.byte_size(bs)
     list.each(chunk_sizes(total), fn(k) {
-      decode_chunked(bs, k) |> should.equal(ssevents.decode_bytes(bs))
+      decode_chunked(bs, k) |> should.equal(decode_bytes(bs))
     })
   })
 }
@@ -330,11 +274,10 @@ pub fn chunked_decode_matches_full_decode_test() {
 // (I6) Same parity holds when the wire form uses CRLF line endings.
 pub fn chunked_decode_with_crlf_matches_full_decode_test() {
   for_each_items(corpus(), fn(xs) {
-    let encoded = ssevents.encode_items_with_line_ending(xs, encoder.Crlf)
-    let bs = bit_array.from_string(encoded)
+    let bs = <<with_crlf(ssevents.encode_items(xs)):utf8>>
     let total = bit_array.byte_size(bs)
     list.each(chunk_sizes(total), fn(k) {
-      decode_chunked(bs, k) |> should.equal(ssevents.decode_bytes(bs))
+      decode_chunked(bs, k) |> should.equal(decode_bytes(bs))
     })
   })
 }
@@ -343,8 +286,8 @@ pub fn chunked_decode_with_crlf_matches_full_decode_test() {
 
 // (I7) For every split position i in 0..len, two-chunk feed equals one-shot.
 pub fn every_split_position_matches_full_decode_test() {
-  let bs = ssevents.encode_items_bytes(small_corpus_for_split())
-  let expected = ssevents.decode_bytes(bs)
+  let bs = encode_bytes(small_corpus_for_split())
+  let expected = decode_bytes(bs)
   list.each(every_split(bs), fn(pair) {
     let #(prefix, suffix) = pair
     decode_via_chunks([prefix, suffix]) |> should.equal(expected)
@@ -354,13 +297,8 @@ pub fn every_split_position_matches_full_decode_test() {
 // (I7) Same property with CRLF wire form: catches splits that land
 // between CR and LF.
 pub fn every_split_position_with_crlf_test() {
-  let encoded =
-    ssevents.encode_items_with_line_ending(
-      small_corpus_for_split(),
-      encoder.Crlf,
-    )
-  let bs = bit_array.from_string(encoded)
-  let expected = ssevents.decode_bytes(bs)
+  let bs = <<with_crlf(ssevents.encode_items(small_corpus_for_split())):utf8>>
+  let expected = decode_bytes(bs)
   list.each(every_split(bs), fn(pair) {
     let #(prefix, suffix) = pair
     decode_via_chunks([prefix, suffix]) |> should.equal(expected)
@@ -370,9 +308,9 @@ pub fn every_split_position_with_crlf_test() {
 // (I7) Same property with a leading UTF-8 BOM so split positions 1, 2, 3
 // land inside the BOM and exercise the partial-BOM-strip path.
 pub fn every_split_position_with_bom_test() {
-  let body = ssevents.encode_items_bytes(small_corpus_for_split())
+  let body = encode_bytes(small_corpus_for_split())
   let bs = bit_array.concat([<<0xEF, 0xBB, 0xBF>>, body])
-  let expected = ssevents.decode_bytes(bs)
+  let expected = decode_bytes(bs)
   list.each(every_split(bs), fn(pair) {
     let #(prefix, suffix) = pair
     decode_via_chunks([prefix, suffix]) |> should.equal(expected)
@@ -388,22 +326,12 @@ pub fn push_with_empty_chunk_in_middle_test() {
 
 // ====== Group D: Line-ending parity =======================================
 
-// (I5)
-pub fn lf_and_crlf_decode_to_same_items_test() {
-  for_each_items(corpus(), fn(xs) {
-    let lf = ssevents.encode_items_with_line_ending(xs, encoder.Lf)
-    let crlf = ssevents.encode_items_with_line_ending(xs, encoder.Crlf)
-    ssevents.decode(lf) |> should.equal(ssevents.decode(crlf))
-  })
-}
-
 // (I4 + I5) Both encodings round-trip back to the original item list.
 pub fn lf_and_crlf_decode_to_corpus_test() {
   for_each_items(corpus(), fn(xs) {
-    let lf = ssevents.encode_items_with_line_ending(xs, encoder.Lf)
-    let crlf = ssevents.encode_items_with_line_ending(xs, encoder.Crlf)
-    ssevents.decode(lf) |> should.equal(Ok(xs))
-    ssevents.decode(crlf) |> should.equal(Ok(xs))
+    let lf = ssevents.encode_items(xs)
+    decode(lf) |> should.equal(Ok(xs))
+    decode(with_crlf(lf)) |> should.equal(Ok(xs))
   })
 }
 
@@ -413,57 +341,20 @@ pub fn lf_and_crlf_decode_to_corpus_test() {
 pub fn encode_items_equals_concat_of_encode_item_test() {
   for_each_items(corpus(), fn(xs) {
     ssevents.encode_items(xs)
-    |> should.equal(string.concat(list.map(xs, ssevents.encode_item)))
-  })
-}
-
-// (I3)
-pub fn encode_items_bytes_equals_concat_of_item_bytes_test() {
-  for_each_items(corpus(), fn(xs) {
-    ssevents.encode_items_bytes(xs)
-    |> should.equal(bit_array.concat(list.map(xs, ssevents.encode_item_bytes)))
-  })
-}
-
-// (I3) Same parity for both Lf and Crlf line endings.
-pub fn encode_items_with_line_ending_concat_parity_test() {
-  for_each_items(corpus(), fn(xs) {
-    let lf =
-      string.concat(
-        list.map(xs, fn(item) {
-          ssevents.encode_item_with_line_ending(item, encoder.Lf)
-        }),
-      )
-    ssevents.encode_items_with_line_ending(xs, encoder.Lf)
-    |> should.equal(lf)
-
-    let crlf =
-      string.concat(
-        list.map(xs, fn(item) {
-          ssevents.encode_item_with_line_ending(item, encoder.Crlf)
-        }),
-      )
-    ssevents.encode_items_with_line_ending(xs, encoder.Crlf)
-    |> should.equal(crlf)
+    |> should.equal(
+      string.concat(list.map(xs, fn(x) { ssevents.encode_items([x]) })),
+    )
   })
 }
 
 // ====== Group F: String/bytes mirror, empty-input =========================
 
-// (I2) Property restatement of decode_bytes_equals_decode_string_test.
-pub fn decode_bytes_mirrors_decode_for_corpus_test() {
-  for_each_items(corpus(), fn(xs) {
-    let encoded = ssevents.encode_items(xs)
-    ssevents.decode_bytes(bit_array.from_string(encoded))
-    |> should.equal(ssevents.decode(encoded))
-  })
-}
-
 // (I8)
 pub fn decode_empty_input_test() {
-  ssevents.decode("") |> should.equal(Ok([]))
-  ssevents.decode_bytes(<<>>) |> should.equal(Ok([]))
+  decode("") |> should.equal(Ok([]))
+  decode_bytes(<<>>) |> should.equal(Ok([]))
 
-  let assert Ok(items) = ssevents.finish(ssevents.new_decoder())
+  let assert Ok(items) =
+    ssevents.finish(ssevents.new_decoder(ssevents.default_limits))
   items |> should.equal([])
 }

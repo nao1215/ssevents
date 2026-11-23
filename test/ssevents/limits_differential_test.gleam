@@ -1,4 +1,4 @@
-//// Differential tests between the one-shot decoder (`decode_bytes_with_limits`)
+//// Differential tests between the one-shot decoder (`decode`)
 //// and the incremental one (`push` / `finish`) on random wire text that the
 //// encoder would never produce: mixed LF / CRLF / lone CR line endings,
 //// unknown fields, fields without a colon, bad retry values and comments.
@@ -82,7 +82,7 @@ fn incremental(
   pieces: List(BitArray),
   limits: ssevents.Limits,
 ) -> Result(List(ssevents.Item), ssevents.SseError) {
-  push_all(ssevents.new_decoder_with_limits(limits), pieces, [])
+  push_all(ssevents.new_decoder(limits), pieces, [])
 }
 
 fn push_all(
@@ -111,9 +111,8 @@ fn sizes_gen() -> Generator(List(Int)) {
 pub fn incremental_matches_one_shot_with_default_limits_test() -> Nil {
   metamon.forall(generator.tuple2(wire_gen(), sizes_gen()), fn(input) {
     let #(wire, sizes) = input
-    let limits = ssevents.default_limits()
-    incremental(chunks(wire, sizes), limits)
-    == ssevents.decode_bytes_with_limits(wire, limits: limits)
+    let limits = ssevents.default_limits
+    incremental(chunks(wire, sizes), limits) == ssevents.decode(wire, limits)
   })
 }
 
@@ -161,19 +160,12 @@ fn boundary_property(input: #(BitArray, List(Int), #(String, Int))) -> Bool {
       False -> n + delta
     }
   }
-  let defaults = ssevents.default_limits()
-  let #(line, event, data, retry) = #(
-    ssevents.max_line_bytes(defaults),
-    ssevents.max_event_bytes(defaults),
-    ssevents.max_data_lines(defaults),
-    ssevents.max_retry_value(defaults),
-  )
+  let defaults = ssevents.default_limits
   let limits = case which {
-    "line" -> ssevents.new_limits(at(longest), event, data, retry)
-    "event" -> ssevents.new_limits(line, at(total), data, retry)
-    "data" -> ssevents.new_limits(line, event, at(data_lines), retry)
-    _ -> ssevents.new_limits(line, event, data, at(10))
+    "line" -> ssevents.Limits(..defaults, max_line_bytes: at(longest))
+    "event" -> ssevents.Limits(..defaults, max_event_bytes: at(total))
+    "data" -> ssevents.Limits(..defaults, max_data_lines: at(data_lines))
+    _ -> ssevents.Limits(..defaults, max_retry_value: at(10))
   }
-  incremental(chunks(wire, sizes), limits)
-  == ssevents.decode_bytes_with_limits(wire, limits: limits)
+  incremental(chunks(wire, sizes), limits) == ssevents.decode(wire, limits)
 }

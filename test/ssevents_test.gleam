@@ -1,15 +1,9 @@
 import gleeunit
 import gleeunit/should
-import ssevents
-import ssevents/error.{InvalidRetry, InvalidUtf8}
+import ssevents.{EventTooLarge, InvalidUtf8, LineTooLong, TooManyDataLines}
 
 pub fn main() -> Nil {
   gleeunit.main()
-}
-
-pub fn package_name_matches_repository_test() {
-  ssevents.package_name
-  |> should.equal("ssevents")
 }
 
 pub fn encode_decode_roundtrip_items_test() {
@@ -18,17 +12,26 @@ pub fn encode_decode_roundtrip_items_test() {
     ssevents.named("job.started", "hello\nworld")
       |> ssevents.id("cursor-1")
       |> ssevents.retry(2000)
-      |> ssevents.event_item,
-    ssevents.new("") |> ssevents.event_item,
+      |> ssevents.EventItem,
+    ssevents.EventItem(ssevents.new("")),
   ]
 
-  let assert Ok(decoded) = items |> ssevents.encode_items |> ssevents.decode
-  decoded |> should.equal(items)
+  let wire = ssevents.encode_items(items)
+  ssevents.decode(<<wire:utf8>>, ssevents.default_limits)
+  |> should.equal(Ok(items))
 }
 
-pub fn facade_error_to_string_test() {
+pub fn content_type_test() {
+  ssevents.content_type() |> should.equal("text/event-stream")
+}
+
+pub fn error_to_string_test() {
   ssevents.error_to_string(InvalidUtf8)
-  |> should.equal(error.to_string(InvalidUtf8))
-  ssevents.error_to_string(InvalidRetry("nope"))
-  |> should.equal(error.to_string(InvalidRetry("nope")))
+  |> should.equal("invalid UTF-8 in SSE input")
+  ssevents.error_to_string(LineTooLong(limit: 8))
+  |> should.equal("line exceeds configured byte limit 8")
+  ssevents.error_to_string(EventTooLarge(limit: 9))
+  |> should.equal("event exceeds configured byte limit 9")
+  ssevents.error_to_string(TooManyDataLines(limit: 2))
+  |> should.equal("event exceeds configured data-line limit 2")
 }
