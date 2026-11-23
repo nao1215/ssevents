@@ -15,7 +15,7 @@ import gleam/int
 import gleam/io
 import gleam/list
 import gleam/option.{None, Some}
-import ssevents.{CommentItem, EventItem, ReconnectState}
+import ssevents.{CommentItem, EventItem, ReconnectItem, ReconnectState}
 
 pub fn main() {
   let chunks = wire_chunks()
@@ -26,8 +26,7 @@ pub fn main() {
 
   let assert Ok(#(state, items)) =
     drain(ssevents.new_decoder(ssevents.default_limits), chunks, [])
-  let assert Ok(trailing) = ssevents.finish(state)
-  let all_items = list.append(items, trailing)
+  let all_items = list.append(items, ssevents.finish(state))
 
   io.println("\n# Items emitted")
   list.each(all_items, describe)
@@ -72,12 +71,12 @@ fn drain(
 
 /// A handcrafted byte stream that mimics what an HTTP client would
 /// actually pull from a `text/event-stream` response: a leading UTF-8
-/// BOM, an event split across two reads, a multi-line `data` field,
-/// and a heartbeat comment.
+/// BOM, a `retry` sent on its own, an event split across two reads, a
+/// multi-line `data` field, and a heartbeat comment.
 fn wire_chunks() -> List(BitArray) {
   [
     <<0xEF, 0xBB, 0xBF>>,
-    <<"retry: 5000\n":utf8>>,
+    <<"retry: 5000\n\n":utf8>>,
     <<"id: cursor-1\nevent: job.s":utf8>>,
     <<"tarted\ndata: build #42\n\n":utf8>>,
     <<": heartbeat\n":utf8>>,
@@ -100,6 +99,13 @@ fn describe(item: ssevents.Item) -> Nil {
       io.println("- event " <> name <> id <> ": " <> describe_data(event))
     }
     CommentItem(c) -> io.println("- comment: " <> ssevents.comment_text(c))
+    ReconnectItem(id:, retry:) ->
+      io.println(
+        "- reconnect: id="
+        <> option.unwrap(id, "(unchanged)")
+        <> ", retry="
+        <> option.map(retry, int.to_string) |> option.unwrap("(unchanged)"),
+      )
   }
 }
 

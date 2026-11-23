@@ -3,9 +3,10 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleeunit/should
 import ssevents.{
-  CommentItem, EventItem, EventTooLarge, InvalidUtf8, LineTooLong,
+  CommentItem, EventItem, EventTooLarge, LineTooLong, ReconnectItem,
   TooManyDataLines,
 }
+import support
 
 fn decode(text: String) -> Result(List(ssevents.Item), ssevents.SseError) {
   ssevents.decode(<<text:utf8>>, ssevents.default_limits)
@@ -25,7 +26,7 @@ pub fn decode_comment_and_event_test() {
   let assert Ok(items) = decode(": hello\ndata: world\n\n")
   items
   |> should.equal([
-    ssevents.comment("hello"),
+    support.comment("hello"),
     EventItem(ssevents.new("world")),
   ])
 }
@@ -45,18 +46,11 @@ pub fn decode_crlf_test() {
   ssevents.data_of(event) |> should.equal("hello")
 }
 
-pub fn decode_final_unterminated_event_is_dispatched_test() {
-  let assert Ok([EventItem(event)]) = decode("data: tail")
-  ssevents.data_of(event) |> should.equal("tail")
-}
-
-pub fn decode_retry_only_block_does_not_dispatch_test() {
-  // Pre-#87 this pinned retry-only blocks as dispatching an EventItem
-  // with the retry value attached. WHATWG HTML §9.2.6 step 4 says the
-  // data buffer is what gates dispatch: a retry-only block mutates the
-  // user agent's reconnection-time state but does NOT dispatch. The
-  // decoder now mirrors the spec and emits an empty list.
-  decode("retry: 1500\n\n") |> should.equal(Ok([]))
+pub fn decode_retry_only_block_is_a_reconnect_item_test() {
+  // A block without `data` dispatches no event, but its `retry` still
+  // sets the reconnection time, so it is returned as a ReconnectItem.
+  decode("retry: 1500\n\n")
+  |> should.equal(Ok([ReconnectItem(id: None, retry: Some(1500))]))
 }
 
 pub fn decode_empty_data_event_test() {
@@ -74,8 +68,9 @@ pub fn decode_invalid_retry_test() {
 }
 
 pub fn decode_bytes_invalid_utf8_in_field_name_test() {
+  // The field is named U+FFFD, which is unknown.
   ssevents.decode(<<255, 58, 32, 120, 10, 10>>, ssevents.default_limits)
-  |> should.equal(Error(InvalidUtf8))
+  |> should.equal(Ok([]))
 }
 
 pub fn decode_bytes_invalid_utf8_in_field_value_test() {
@@ -83,7 +78,7 @@ pub fn decode_bytes_invalid_utf8_in_field_value_test() {
     <<100, 97, 116, 97, 58, 32, 255, 10, 10>>,
     ssevents.default_limits,
   )
-  |> should.equal(Error(InvalidUtf8))
+  |> should.equal(Ok([EventItem(ssevents.new("\u{FFFD}"))]))
 }
 
 pub fn decode_line_too_long_test() {
@@ -150,7 +145,7 @@ pub fn incremental_push_handles_partial_chunks_test() {
     state |> ssevents.push(bit_array.from_string("lo\n\n"))
   items2 |> should.equal([EventItem(ssevents.new("hello"))])
 
-  let assert Ok(items3) = ssevents.finish(state)
+  let items3 = ssevents.finish(state)
   items3 |> should.equal([])
 }
 
@@ -168,14 +163,12 @@ pub fn incremental_push_handles_split_utf8_test() {
   items2 |> should.equal([EventItem(ssevents.new("😀"))])
 }
 
-pub fn incremental_push_invalid_utf8_returns_error_without_advancing_test() {
+pub fn incremental_push_replaces_invalid_utf8_test() {
   let state = ssevents.new_decoder(ssevents.default_limits)
-
-  ssevents.push(state, <<100, 97, 116, 97, 58, 32, 255, 10>>)
-  |> should.equal(Error(InvalidUtf8))
-
-  let assert Ok(items) = ssevents.finish(state)
-  items |> should.equal([])
+  let assert Ok(#(state, [])) =
+    ssevents.push(state, <<100, 97, 116, 97, 58, 32, 255, 10>>)
+  let assert Ok(#(_, items)) = ssevents.push(state, <<10>>)
+  items |> should.equal([EventItem(ssevents.new("\u{FFFD}"))])
 }
 
 pub fn incremental_push_handles_crlf_split_across_chunks_test() {
@@ -188,7 +181,7 @@ pub fn incremental_push_handles_crlf_split_across_chunks_test() {
     ssevents.push(state, <<"\ndata: world\r\n\r\n":utf8>>)
   items2 |> should.equal([EventItem(ssevents.new("hello\nworld"))])
 
-  let assert Ok(items3) = ssevents.finish(state)
+  let items3 = ssevents.finish(state)
   items3 |> should.equal([])
 }
 
@@ -201,7 +194,7 @@ pub fn incremental_push_handles_crlf_with_one_byte_chunks_test() {
     push_chunks(ssevents.new_decoder(ssevents.default_limits), chunks, [])
   items |> should.equal([EventItem(ssevents.new("hello\nworld"))])
 
-  let assert Ok(trailing) = ssevents.finish(state)
+  let trailing = ssevents.finish(state)
   trailing |> should.equal([])
 }
 
@@ -264,17 +257,13 @@ pub fn decode_mixed_lone_cr_and_lf_test() {
 }
 
 pub fn finish_with_trailing_lone_cr_test() {
-  // A buffer ending in CR with nothing after is a lone-CR terminator
-  // at finish time (no more bytes are coming).
+  // The CR ends the `data` line, but no blank line follows, so the event
+  // is not dispatched.
   let state = ssevents.new_decoder(ssevents.default_limits)
   let assert Ok(#(state, items1)) =
     ssevents.push(state, <<"data: hello\r":utf8>>)
-  // CR-at-end is ambiguous mid-stream, so push doesn't emit yet.
   items1 |> should.equal([])
-  // finish treats the trailing CR as a lone-CR terminator and emits
-  // the unterminated event with `data: hello`.
-  let assert Ok(items) = ssevents.finish(state)
-  items |> should.equal([EventItem(ssevents.new("hello"))])
+  ssevents.finish(state) |> should.equal([])
 }
 
 // WHATWG SSE §9.2.6: retry with non-ASCII-digit value must be
@@ -352,19 +341,6 @@ pub fn decode_id_without_nul_still_set_test() {
   ssevents.id_of(event) |> should.equal(Some("clean"))
 }
 
-pub fn decode_id_with_lf_is_silently_ignored_test() {
-  // Per WHATWG, the only NUL is explicitly mentioned, but the same
-  // validation helper rejects CR/LF too — and the wire-format
-  // semantics of "ignore the field" are the same. A CR/LF in the id
-  // can only arise from a broken upstream encoder; the decoder
-  // silently drops the field rather than failing the event.
-  // (CR / LF inside the value never reach the decoder via well-formed
-  // wire input because they would terminate the line first; this
-  // test asserts the behaviour at the validate boundary.)
-  let assert Ok(items) = decode("data: payload\n\n")
-  list.length(items) |> should.equal(1)
-}
-
 pub fn incremental_push_strips_bom_split_across_chunks_test() {
   // Push the BOM bytes one at a time, then the rest. The decoder
   // should still strip the full BOM and emit one event.
@@ -378,7 +354,7 @@ pub fn incremental_push_strips_bom_split_across_chunks_test() {
   let assert Ok(#(state, items4)) =
     ssevents.push(state, <<"data: hello\n\n":utf8>>)
   items4 |> should.equal([EventItem(ssevents.new("hello"))])
-  let assert Ok(trailing) = ssevents.finish(state)
+  let trailing = ssevents.finish(state)
   trailing |> should.equal([])
 }
 
@@ -488,7 +464,7 @@ pub fn pending_cr_does_not_count_towards_max_line_bytes_test() {
   let assert Ok(#(state, second)) =
     ssevents.push(state, <<"\ndata: efgh\r":utf8>>)
   let assert Ok(#(state, third)) = ssevents.push(state, <<"\r\n":utf8>>)
-  let assert Ok(rest) = ssevents.finish(state)
+  let rest = ssevents.finish(state)
   Ok(list.flatten([first, second, third, rest])) |> should.equal(one_shot)
 
   // One byte more is still rejected, with or without the pending CR.
@@ -511,19 +487,18 @@ pub fn decode_keeps_byte_order_mark_right_after_colon_test() {
   decode("data:\u{FEFF}x\n\n")
   |> should.equal(Ok([EventItem(ssevents.new("\u{FEFF}x"))]))
   decode(":\u{FEFF}note\n")
-  |> should.equal(Ok([ssevents.comment("\u{FEFF}note")]))
+  |> should.equal(Ok([support.comment("\u{FEFF}note")]))
 }
 
-pub fn decode_removes_nul_from_event_name_test() {
-  // The event name has no NUL rule, so the field is kept with the NUL
-  // removed, as `named` does. It used to fail the whole stream.
+pub fn decode_keeps_nul_in_event_name_test() {
+  // The event name has no NUL rule, so the NUL is part of the name.
   let assert Ok([EventItem(event)]) = decode("event: a\u{0000}b\ndata: x\n\n")
-  ssevents.name_of(event) |> should.equal(Some("ab"))
+  ssevents.name_of(event) |> should.equal(Some("a\u{0000}b"))
 }
 
-pub fn decode_removes_nul_from_data_test() {
+pub fn decode_keeps_nul_in_data_test() {
   decode("data: a\u{0000}b\n\n")
-  |> should.equal(Ok([EventItem(ssevents.new("ab"))]))
+  |> should.equal(Ok([EventItem(ssevents.new("a\u{0000}b"))]))
 }
 
 pub fn push_dispatches_event_ending_in_lone_cr_at_chunk_end_test() {
@@ -540,13 +515,13 @@ pub fn push_dispatches_event_ending_in_lone_cr_at_chunk_end_test() {
   items |> should.equal([])
   let assert Ok(#(decoder, items)) = ssevents.push(decoder, <<"\n\r\n":utf8>>)
   items |> should.equal([EventItem(ssevents.new("b"))])
-  ssevents.finish(decoder) |> should.equal(Ok([]))
+  ssevents.finish(decoder) |> should.equal([])
 }
 
 pub fn decode_treats_empty_event_name_as_message_test() {
   decode("event:\ndata: x\n\n")
   |> should.equal(Ok([EventItem(ssevents.new("x"))]))
-  ssevents.named("", "x") |> should.equal(ssevents.new("x"))
+  support.named("", "x") |> should.equal(ssevents.new("x"))
 }
 
 pub fn push_keeps_blank_line_after_crlf_at_chunk_end_test() {

@@ -13,7 +13,7 @@
 
 Encode and decode Server-Sent Events, the `text/event-stream` format, in Gleam on Erlang and JavaScript.
 
-A server builds events with `new` or `named` and writes them with `encode_items`. A client reads a body with `decode`, or chunk by chunk with `push`, within limits on line, event and `data` sizes. The decoder follows the WHATWG event stream rules and gives the same items on both targets however the input is split. It needs only `gleam_stdlib`, so any HTTP server or client can use it.
+A server builds events with `new` or `named` and writes them with `encode_items`. A client reads a body with `decode`, or chunk by chunk with `push`, within limits on line, event and `data` sizes. The decoder follows the WHATWG rules for interpreting an event stream, and gives the same items on both targets however the input is split. It needs only `gleam_stdlib`, so any HTTP server or client can use it.
 
 ```sh
 gleam add ssevents@0
@@ -24,19 +24,24 @@ gleam add ssevents@0
 This is [`examples/quick_start`](https://github.com/nao1215/ssevents/tree/main/examples/quick_start), which CI runs.
 
 ```gleam
+import gleam/int
 import gleam/io
 import gleam/list
+import gleam/option.{None, Some}
+import gleam/result
 import gleam/string
-import ssevents.{CommentItem, EventItem}
+import ssevents.{CommentItem, EventItem, ReconnectItem}
 
 pub fn main() {
+  let assert Ok(opened) = ssevents.comment("stream opened")
+  let assert Ok(started) =
+    ssevents.named("job.started", "build #42")
+    |> result.try(ssevents.id(_, "cursor-1"))
   let body =
     ssevents.encode_items([
-      ssevents.comment("stream opened"),
-      ssevents.named("job.started", "build #42")
-        |> ssevents.id("cursor-1")
-        |> ssevents.retry(5000)
-        |> EventItem,
+      opened,
+      ReconnectItem(id: None, retry: Some(5000)),
+      EventItem(started),
       EventItem(ssevents.new("step 1/3\nrunning lints")),
     ])
   io.print(body)
@@ -48,6 +53,9 @@ pub fn main() {
         io.println("event data: " <> string.inspect(ssevents.data_of(event)))
       CommentItem(comment) ->
         io.println("comment: " <> ssevents.comment_text(comment))
+      ReconnectItem(retry: Some(ms), ..) ->
+        io.println("retry: " <> int.to_string(ms))
+      ReconnectItem(..) -> Nil
     }
   })
 }
@@ -55,15 +63,17 @@ pub fn main() {
 
 ```text
 : stream opened
+retry: 5000
+
 event: job.started
 id: cursor-1
-retry: 5000
 data: build #42
 
 data: step 1/3
 data: running lints
 
 comment: stream opened
+retry: 5000
 event data: "build #42"
 event data: "step 1/3\nrunning lints"
 ```
@@ -75,28 +85,27 @@ pub fn read_body(chunks: List(BitArray)) {
   let limits =
     ssevents.Limits(..ssevents.default_limits, max_event_bytes: 16_384)
   let start = #(ssevents.new_decoder(limits), [])
-  use #(decoder, items) <- result.try(
+  use #(decoder, items) <- result.map(
     list.try_fold(chunks, start, fn(acc, chunk) {
       let #(decoder, items) = acc
       use #(decoder, new) <- result.map(ssevents.push(decoder, chunk))
       #(decoder, list.append(items, new))
     }),
   )
-  use rest <- result.map(ssevents.finish(decoder))
-  list.append(items, rest)
+  list.append(items, ssevents.finish(decoder))
 }
 ```
 
-`update_reconnect` folds the items into a `ReconnectState` that holds the `id` to send back in `Last-Event-ID` and the last `retry`. [`examples/`](https://github.com/nao1215/ssevents/tree/main/examples) also shows the chunks a server writes, the response headers an SSE endpoint needs, and a browser client.
+`update_reconnect` folds the items into a `ReconnectState` that holds the `id` to send back in `Last-Event-ID` and the last `retry`. A block with an `id` or a `retry` but no `data` comes out of the decoder as a `ReconnectItem`, so those reach the state too. [`examples/`](https://github.com/nao1215/ssevents/tree/main/examples) also shows the chunks a server writes, the response headers an SSE endpoint needs, and a browser client.
 
 The API reference is on [HexDocs](https://hexdocs.pm/ssevents/).
 
 ## Notes
 
-- `named`, `id` and `comment` remove CR, LF and NUL, and `new` turns CR into LF and removes NUL, so a value from a user cannot add lines or fields to the stream.
+- `named`, `id` and `comment` return `Error(Nil)` for a value with CR or LF, and `id` also for one with NUL, so a value from a user cannot add lines or fields to the stream or reach the client changed. `new` turns CR and CRLF in `data` into LF, which is how a client reads them anyway.
 - `encode` splits a `data` line longer than 8000 bytes into lines of at most 2000 code points, so that `decode` with `default_limits` can read it. The client joins them with LF, so the data it receives has an LF at each split. `event` and `id` lines are not split, so keep names and ids well under 8000 bytes.
 - `retry` removes the field for a value below 0 or above 86_400_000 (24 hours), and `decode` ignores a larger value than `max_retry_value`.
-- `decode` returns an event at the end of the input even without its closing blank line, which a browser would drop. It does not return a block that has no `data` line, so an `id` or `retry` sent on its own does not reach `ReconnectState`.
+- As in a browser, `decode` drops an event at the end of the input that has no closing blank line, and reads bytes that are not UTF-8 as U+FFFD.
 
 How the package is tested is described in [doc/testing.md](https://github.com/nao1215/ssevents/blob/main/doc/testing.md).
 

@@ -25,7 +25,9 @@ A buffered stream works locally and stalls behind a proxy, so also turn off resp
 
 For a finite response, encode all items with `ssevents.encode_items` and send the string as the body. For a live stream, write `ssevents.encode_items([item])` or `ssevents.encode(event)` as one chunk per item, using the chunked or streaming body of your framework (`mist.Chunked`, for example). Each encoded event ends with a blank line, so the browser dispatches it as soon as the chunk arrives.
 
-Some proxies close a connection that has been idle for 30 to 60 seconds. Writing `ssevents.comment("")` every 15 seconds or so keeps it open, and `EventSource` ignores comments.
+Some proxies close a connection that has been idle for 30 to 60 seconds. Writing an empty comment every 15 seconds or so keeps it open, and `EventSource` ignores comments. `ssevents.comment("")` returns it, wrapped in `Ok` as every text without a line break is.
+
+To change how long the client waits before it reconnects without sending an event, write `ssevents.ReconnectItem(id: None, retry: Some(5000))`. It is encoded as a block with a `retry` line and no `data`, which `server_emit` sends first.
 
 ## Browser client
 
@@ -48,4 +50,4 @@ source.onerror = () => {
 
 ## Reading a stream in Gleam
 
-A Gleam client, on either target, gives each chunk of the response body to `ssevents.push` and calls `ssevents.finish` when the body ends. `ssevents.update_reconnect` keeps the `id` and `retry` to use for the next connection, as `streaming_consume` shows.
+A Gleam client, on either target, gives each chunk of the response body to `ssevents.push` and calls `ssevents.finish` when the body ends. `ssevents.update_reconnect` keeps the `id` and `retry` to use for the next connection from every `EventItem` and `ReconnectItem`, as `streaming_consume` shows. As in a browser, an event that the body ends before its blank line is dropped.

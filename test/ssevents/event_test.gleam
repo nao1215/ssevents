@@ -1,6 +1,7 @@
 import gleam/option.{None, Some}
 import gleeunit/should
 import ssevents.{CommentItem, EventItem}
+import support
 
 fn decode(text: String) -> Result(List(ssevents.Item), ssevents.SseError) {
   ssevents.decode(<<text:utf8>>, ssevents.default_limits)
@@ -8,8 +9,8 @@ fn decode(text: String) -> Result(List(ssevents.Item), ssevents.SseError) {
 
 pub fn event_builder_accessors_test() {
   let event =
-    ssevents.named("job.update", "payload")
-    |> ssevents.id("job-1")
+    support.named("job.update", "payload")
+    |> support.id("job-1")
     |> ssevents.retry(5000)
 
   ssevents.name_of(event) |> should.equal(Some("job.update"))
@@ -25,46 +26,26 @@ pub fn new_has_no_optional_fields_test() {
   ssevents.retry_of(event) |> should.equal(None)
 }
 
-// CR, LF and NUL in a name or an id cannot survive the wire format, so
-// they are removed when the event is built.
+// CR and LF in a name or an id would end the line on the wire, and a NUL
+// makes a browser ignore the `id` field, so the builders refuse them.
 
-pub fn named_strips_lf_test() {
-  ssevents.named("foo\nbar", "payload")
+pub fn named_refuses_line_breaks_test() {
+  ssevents.named("foo\nbar", "payload") |> should.equal(Error(Nil))
+  ssevents.named("foo\rbar", "payload") |> should.equal(Error(Nil))
+}
+
+pub fn named_keeps_nul_test() {
+  support.named("foo\u{0000}bar", "payload")
   |> ssevents.name_of
-  |> should.equal(Some("foobar"))
+  |> should.equal(Some("foo\u{0000}bar"))
 }
 
-pub fn named_strips_cr_test() {
-  ssevents.named("foo\rbar", "payload")
-  |> ssevents.name_of
-  |> should.equal(Some("foobar"))
-}
-
-pub fn named_strips_nul_test() {
-  ssevents.named("foo\u{0000}bar", "payload")
-  |> ssevents.name_of
-  |> should.equal(Some("foobar"))
-}
-
-pub fn id_strips_lf_test() {
-  ssevents.new("payload")
-  |> ssevents.id("a\nb")
-  |> ssevents.id_of
-  |> should.equal(Some("ab"))
-}
-
-pub fn id_strips_crlf_pair_test() {
-  ssevents.new("payload")
-  |> ssevents.id("a\r\nb")
-  |> ssevents.id_of
-  |> should.equal(Some("ab"))
-}
-
-pub fn id_strips_nul_test() {
+pub fn id_refuses_line_breaks_and_nul_test() {
+  ssevents.new("payload") |> ssevents.id("a\nb") |> should.equal(Error(Nil))
+  ssevents.new("payload") |> ssevents.id("a\r\nb") |> should.equal(Error(Nil))
   ssevents.new("payload")
   |> ssevents.id("with\u{0000}nul")
-  |> ssevents.id_of
-  |> should.equal(Some("withnul"))
+  |> should.equal(Error(Nil))
 }
 
 pub fn new_normalises_lone_cr_in_data_to_lf_test() {
@@ -76,10 +57,10 @@ pub fn new_strips_cr_from_crlf_pair_in_data_test() {
   ssevents.new("a\r\nb") |> ssevents.data_of |> should.equal("a\nb")
 }
 
-pub fn new_strips_nul_from_data_test() {
+pub fn new_keeps_nul_in_data_test() {
   ssevents.new("hello\u{0000}world")
   |> ssevents.data_of
-  |> should.equal("helloworld")
+  |> should.equal("hello\u{0000}world")
 }
 
 pub fn new_preserves_lf_in_data_test() {
@@ -94,9 +75,9 @@ pub fn data_round_trips_after_cr_sanitisation_test() {
   decode(wire) |> should.equal(Ok([EventItem(event)]))
 }
 
-pub fn encode_then_decode_round_trips_after_sanitisation_test() {
+pub fn encode_then_decode_round_trips_nul_test() {
   let original =
-    ssevents.named("noti\nce", "payload") |> ssevents.id("evt\u{0000}1")
+    support.named("noti\u{0000}ce", "pay\u{0000}load") |> support.id("evt1")
   let wire = ssevents.encode(original)
   decode(wire) |> should.equal(Ok([EventItem(original)]))
 }
@@ -149,9 +130,9 @@ pub fn encode_decode_round_trips_after_retry_sanitisation_test() {
   decode(ssevents.encode(huge)) |> should.equal(Ok([EventItem(huge)]))
 }
 
-pub fn comment_strips_line_breaks_and_nul_test() {
-  let assert CommentItem(comment) = ssevents.comment("a\r\nb\nc\rd\u{0000}e")
-  ssevents.comment_text(comment) |> should.equal("abcde")
+pub fn comment_keeps_nul_test() {
+  let assert CommentItem(comment) = support.comment("a\u{0000}b")
+  ssevents.comment_text(comment) |> should.equal("a\u{0000}b")
 }
 
 pub fn decoded_item_can_be_matched_through_one_import_test() {
@@ -159,6 +140,6 @@ pub fn decoded_item_can_be_matched_through_one_import_test() {
   case first {
     EventItem(event) ->
       ssevents.name_of(event) |> should.equal(Some("job.update"))
-    CommentItem(_) -> should.fail()
+    _ -> should.fail()
   }
 }

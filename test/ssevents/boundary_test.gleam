@@ -5,7 +5,6 @@
 //// limits_differential_test.gleam cannot see a shift that moves them
 //// together.
 
-import gleam/list
 import gleam/option.{None, Some}
 import gleeunit/should
 import ssevents.{EventItem, EventTooLarge, LineTooLong, TooManyDataLines}
@@ -78,13 +77,4 @@ pub fn empty_retry_value_is_ignored_test() {
   let assert Ok([EventItem(decoded)]) =
     ssevents.decode(<<"retry:\ndata: x\n\n":utf8>>, ssevents.default_limits)
   ssevents.retry_of(decoded) |> should.equal(None)
-}
-
-pub fn forbidden_bytes_are_removed_from_names_and_ids_test() {
-  ["a\nb", "a\rb", "a\u{0000}b", "a\r\nb"]
-  |> list.each(fn(bad) {
-    let event = ssevents.named(bad, "x") |> ssevents.id(bad)
-    ssevents.name_of(event) |> should.equal(Some("ab"))
-    ssevents.id_of(event) |> should.equal(Some("ab"))
-  })
 }

@@ -3,6 +3,7 @@ import gleam/list
 import gleam/string
 import gleeunit/should
 import ssevents.{EventItem}
+import support
 
 fn decode(text: String) -> Result(List(ssevents.Item), ssevents.SseError) {
   ssevents.decode(<<text:utf8>>, ssevents.default_limits)
@@ -14,8 +15,8 @@ fn encode_item(item: ssevents.Item) -> String {
 
 pub fn encode_multiline_event_with_lf_test() {
   let event =
-    ssevents.named("update", "line1\nline2")
-    |> ssevents.id("abc")
+    support.named("update", "line1\nline2")
+    |> support.id("abc")
     |> ssevents.retry(2500)
 
   ssevents.encode(event)
@@ -25,11 +26,11 @@ pub fn encode_multiline_event_with_lf_test() {
 }
 
 pub fn encode_comment_test() {
-  ssevents.comment("keepalive")
+  support.comment("keepalive")
   |> encode_item
   |> should.equal(": keepalive\n")
 
-  ssevents.comment("")
+  support.comment("")
   |> encode_item
   |> should.equal(":\n")
 }
@@ -116,41 +117,17 @@ pub fn encode_keeps_leading_byte_order_mark_in_data_test() {
   |> should.equal("data: \u{FEFF}x\n\n")
 }
 
-pub fn encode_comment_strips_lf_to_keep_round_trip_test() {
-  // Regression for #61: previously `Comment("a\nb")` encoded to
-  // `: a\n: b\n` and decoded back to two separate `Comment`
-  // values. Sanitisation now lives at construction (#68), so the
-  // encoder writes a single `:` line and decode returns one
-  // `Comment` matching the sanitised text.
-  let item = ssevents.comment("a\nb")
-  let wire = encode_item(item)
-  let assert Ok(decoded) = decode(wire)
-  decoded |> should.equal([ssevents.comment("ab")])
+pub fn comment_with_line_break_is_refused_test() {
+  // Regression for #61: `comment("a\nb")` used to give two comments on
+  // the wire, and then the line break was removed, which changed the
+  // text without telling the caller. It is now refused.
+  ["a\nb", "a\rb", "a\r\nb", "multi\nline\rdiagnostic"]
+  |> list.each(fn(text) { ssevents.comment(text) |> should.equal(Error(Nil)) })
 }
 
-pub fn encode_comment_strips_cr_test() {
-  let item = ssevents.comment("a\rb")
-  let wire = encode_item(item)
-  let assert Ok(decoded) = decode(wire)
-  decoded |> should.equal([ssevents.comment("ab")])
-}
-
-pub fn encode_comment_strips_crlf_pair_test() {
-  let item = ssevents.comment("a\r\nb")
-  let wire = encode_item(item)
-  let assert Ok(decoded) = decode(wire)
-  decoded |> should.equal([ssevents.comment("ab")])
-}
-
-pub fn encode_comment_round_trips_to_single_comment_test() {
-  // After sanitisation the encoded wire is exactly one `:` line, so
-  // decode returns exactly one `Comment` matching the sanitised
-  // input.
-  let item = ssevents.comment("multi\nline\rdiagnostic")
-  let wire = encode_item(item)
-  let assert Ok(decoded) = decode(wire)
-  decoded
-  |> should.equal([ssevents.comment("multilinediagnostic")])
+pub fn comment_with_nul_round_trips_test() {
+  let item = support.comment("a\u{0000}b")
+  decode(encode_item(item)) |> should.equal(Ok([item]))
 }
 
 pub fn encode_splits_oversized_data_line_for_decoder_limit_test() {
@@ -200,4 +177,14 @@ fn contains_byte(input: BitArray, target: Int) -> Bool {
       }
     _ -> False
   }
+}
+
+pub fn data_line_of_exactly_8000_bytes_is_not_split_test() {
+  let data = string.repeat("x", 8000)
+  ssevents.encode(ssevents.new(data))
+  |> should.equal("data: " <> data <> "\n\n")
+  ssevents.encode(ssevents.new(data <> "x"))
+  |> string.split("\n")
+  |> list.length
+  |> should.equal(7)
 }

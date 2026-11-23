@@ -8,7 +8,7 @@
 import gleam/list
 import gleam/string
 import gleeunit/should
-import ssevents.{CommentItem, EventItem, EventTooLarge}
+import ssevents.{EventItem, EventTooLarge}
 
 fn data_without_splits(items: List(ssevents.Item)) -> List(String) {
   // The encoder splits long `data:` lines and the decoder joins them with
@@ -17,7 +17,7 @@ fn data_without_splits(items: List(ssevents.Item)) -> List(String) {
     case item {
       EventItem(event) ->
         ssevents.data_of(event) |> string.replace(each: "\n", with: "")
-      CommentItem(_) -> ""
+      _ -> ""
     }
   })
 }

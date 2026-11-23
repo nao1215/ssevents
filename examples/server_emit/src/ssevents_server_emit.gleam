@@ -11,8 +11,10 @@
 import gleam/int
 import gleam/io
 import gleam/list
+import gleam/option.{None, Some}
+import gleam/result
 import gleam/string
-import ssevents.{EventItem}
+import ssevents.{EventItem, ReconnectItem}
 
 pub fn main() {
   io.println("# Required HTTP response headers")
@@ -52,25 +54,27 @@ pub fn response_headers() -> List(#(String, String)) {
 /// One encoded chunk per write. Each event ends in a blank line, so a
 /// client dispatches it as soon as the chunk arrives.
 fn stream_chunks() -> List(String) {
-  let opening = [
-    ssevents.comment("stream opened"),
-    ssevents.named("retry.hint", "use 5s")
-      |> ssevents.retry(5000)
-      |> EventItem,
-  ]
+  // The names, ids and comments are literals without line breaks, so the
+  // builders cannot fail here.
+  let assert Ok(opened) = ssevents.comment("stream opened")
+  let assert Ok(heartbeat) = ssevents.comment("heartbeat")
+  let assert Ok([started, progress, finished]) =
+    [
+      #("job.started", "build #42", "cursor-1"),
+      #("job.progress", "step 1/3\nrunning lints", "cursor-2"),
+      #("job.finished", "ok", "cursor-3"),
+    ]
+    |> list.try_map(fn(update) {
+      let #(name, data, id) = update
+      ssevents.named(name, data)
+      |> result.try(ssevents.id(_, id))
+      |> result.map(EventItem)
+    })
 
-  let updates = [
-    ssevents.named("job.started", "build #42")
-      |> ssevents.id("cursor-1")
-      |> EventItem,
-    ssevents.named("job.progress", "step 1/3\nrunning lints")
-      |> ssevents.id("cursor-2")
-      |> EventItem,
-    ssevents.comment("heartbeat"),
-    ssevents.named("job.finished", "ok")
-      |> ssevents.id("cursor-3")
-      |> EventItem,
-  ]
+  // A block without data tells the client how long to wait before it
+  // reconnects, without dispatching an event.
+  let opening = [opened, ReconnectItem(id: None, retry: Some(5000))]
+  let updates = [started, progress, heartbeat, finished]
 
   [
     ssevents.encode_items(opening),

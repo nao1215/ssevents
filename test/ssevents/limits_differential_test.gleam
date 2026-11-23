@@ -91,11 +91,7 @@ fn push_all(
   acc: List(List(ssevents.Item)),
 ) -> Result(List(ssevents.Item), ssevents.SseError) {
   case pieces {
-    [] ->
-      case ssevents.finish(state) {
-        Ok(last) -> Ok(list.flatten(list.reverse([last, ..acc])))
-        Error(e) -> Error(e)
-      }
+    [] -> Ok(list.flatten(list.reverse([ssevents.finish(state), ..acc])))
     [piece, ..rest] ->
       case ssevents.push(state, piece) {
         Ok(#(next, items)) -> push_all(next, rest, [items, ..acc])
