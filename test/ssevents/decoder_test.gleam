@@ -525,3 +525,35 @@ pub fn decode_removes_nul_from_data_test() {
   decode("data: a\u{0000}b\n\n")
   |> should.equal(Ok([EventItem(ssevents.new("ab"))]))
 }
+
+pub fn push_dispatches_event_ending_in_lone_cr_at_chunk_end_test() {
+  // A CR at the end of a chunk ends the line at once. It used to wait for
+  // the next chunk to see whether an LF followed, so a server that ends
+  // events with CR CR had each one delivered a chunk late.
+  let decoder = ssevents.new_decoder(ssevents.default_limits)
+  let assert Ok(#(decoder, items)) =
+    ssevents.push(decoder, <<"data: a\r\r":utf8>>)
+  items |> should.equal([EventItem(ssevents.new("a"))])
+  // The LF of a CRLF split across chunks is still one line ending.
+  let assert Ok(#(decoder, items)) =
+    ssevents.push(decoder, <<"data: b\r":utf8>>)
+  items |> should.equal([])
+  let assert Ok(#(decoder, items)) = ssevents.push(decoder, <<"\n\r\n":utf8>>)
+  items |> should.equal([EventItem(ssevents.new("b"))])
+  ssevents.finish(decoder) |> should.equal(Ok([]))
+}
+
+pub fn decode_treats_empty_event_name_as_message_test() {
+  decode("event:\ndata: x\n\n")
+  |> should.equal(Ok([EventItem(ssevents.new("x"))]))
+  ssevents.named("", "x") |> should.equal(ssevents.new("x"))
+}
+
+pub fn push_keeps_blank_line_after_crlf_at_chunk_end_test() {
+  // A CRLF that ends a chunk is complete, so an LF at the start of the
+  // next chunk is a blank line.
+  let decoder = ssevents.new_decoder(ssevents.default_limits)
+  let assert Ok(#(decoder, [])) = ssevents.push(decoder, <<"data: a\r\n":utf8>>)
+  let assert Ok(#(_, items)) = ssevents.push(decoder, <<"\n":utf8>>)
+  items |> should.equal([EventItem(ssevents.new("a"))])
+}

@@ -13,7 +13,7 @@ The public API is smaller: the 10 public modules become `ssevents`, and 151 publ
 
 - `ssevents/event`, `encoder`, `decoder`, `error`, `limit`, `reconnect`, `heartbeat`, `validate` and `stream` are removed. `Event`, `Comment`, `Item`, `Limits`, `DecodeState`, `ReconnectState` and `SseError` are defined in `ssevents`, the re-export aliases are gone, and `EventItem` and `CommentItem` can be matched with one import.
 - `decode(input, limits)` takes a `BitArray` and the limits. `decode_bytes`, `decode_with_limits` and `decode_bytes_with_limits` are removed. `new_decoder(limits)` replaces `new_decoder()` and `new_decoder_with_limits`.
-- `Limits` is a plain record and `default_limits` is a constant: write `Limits(..ssevents.default_limits, max_event_bytes: 200_000)`. `limits()`, `default_limits()`, `new_limits`, `limit.new_checked`, `LimitConfigError`, `with_max_event_size`, the `max_*` getters, `max_event_size` and the `default_max_*` constants are removed. Limit values below 1 are no longer rejected; a limit of 0 allows nothing of that kind.
+- `Limits` is a plain record and `default_limits` is a constant: write `Limits(..ssevents.default_limits, max_event_bytes: 200_000)`. `limits()`, `default_limits()`, `new_limits`, `limit.new_checked`, `LimitConfigError`, `with_max_event_size`, the `max_*` getters, `max_event_size` and the `default_max_*` constants are removed. Limit values are no longer checked: 0 allows nothing of that kind except empty lines, and a negative value allows nothing.
 - `with_strict_retry_cap` and `strict_retry_cap` are removed. A `retry` above `max_retry_value` is always ignored, and the `InvalidRetry` variant is removed with it.
 - `encode` and `encode_items` return LF-terminated `String`s. `encode_bytes`, `encode_item`, `encode_item_bytes`, `encode_items_bytes`, `LineEnding`, `default_line_ending` and the three `*_with_line_ending` functions are removed. Use `encode_items([item])` for one item and `bit_array.from_string` for bytes.
 - `retry` removes the field for a value below 0 instead of panicking, as it already did above 86_400_000. `retry_clamp` is removed.
@@ -65,6 +65,9 @@ let assert Ok([_, EventItem(event)]) = ssevents.decode(<<body:utf8>>, limits)
 - `encode` splits a long `data` line every 2000 code points. It counted graphemes, so data made of emoji with joiners or of combining marks gave a line over 8192 bytes, which `decode` with the default limits rejected with `LineTooLong(8192)`.
 - On JavaScript, `decode` and `push` dropped a U+FEFF at the start of a line or of a field value, so `"\u{FEFF}data: b"` was read as a `data` field and `"data:\u{FEFF}x"` gave `"x"`. Erlang kept the character. Both targets now keep it.
 - A NUL in an `event:` field no longer fails the whole stream with `InvalidField("event")`. It is removed from the name, as `named` does.
+- `push` returns an event whose blank line ends with a CR at the end of a chunk. It used to wait for the next chunk to see whether an LF followed, so a server that ends events with CR CR had each one delivered a chunk late.
+- An empty `event:` field, and `named("", data)`, give an event without a name, which a browser hands to its `message` listeners. `name_of` used to return `Some("")`.
+- `update_reconnect` sets `last_event_id` to `None` for an event with an empty `id`, as a browser then sends no `Last-Event-ID`. It used to keep `Some("")`.
 
 ## [0.16.0] - 2026-11-19
 

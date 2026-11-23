@@ -35,4 +35,4 @@ There is no mutation testing tool for Gleam, so `gleam_mutate.py` (from the muta
 | 2026-11-19 | every module under `src/`, with the differential test | 38 | 13 | 74.5% |
 | 2026-11-19 | the same, plus `test/ssevents/boundary_test.gleam` | 45 | 6 | 88.2% |
 
-The differential test cannot see a threshold that moves in both decoders at once, because they share the limit checks; `boundary_test.gleam` pins those checks at their thresholds. Both runs predate 0.17.0, which merged the modules into `src/ssevents.gleam` and removed or rewrote the code the six survivors were in.
+The differential test cannot see a threshold that moves in both decoders at once, because they share the limit checks; `boundary_test.gleam` pins those checks at their thresholds. Both runs predate the merge of the modules into `src/ssevents.gleam`, which removed or rewrote the code the six survivors were in.

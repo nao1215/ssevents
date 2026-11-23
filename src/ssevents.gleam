@@ -74,7 +74,7 @@ pub fn new(data: String) -> Event {
 /// `EventSource` hands to the listeners for that name.
 ///
 /// CR, LF and NUL are removed from `name`, and `data` is cleaned as in
-/// `new`.
+/// `new`. An empty name gives the same event as `new`.
 ///
 /// ## Examples
 ///
@@ -84,7 +84,16 @@ pub fn new(data: String) -> Event {
 /// ```
 ///
 pub fn named(name: String, data: String) -> Event {
-  Event(..new(data), name: Some(clean_field(name)))
+  Event(..new(data), name: name_field(clean_field(name)))
+}
+
+// A browser hands an event with an empty name to its `message` listeners,
+// the same as one without a name.
+fn name_field(name: String) -> Option(String) {
+  case name {
+    "" -> None
+    _ -> Some(name)
+  }
 }
 
 /// Sets the `id` field. A client sends the last id it saw back in the
@@ -210,7 +219,9 @@ fn clean_data_loop(graphemes: List(String), acc: List(String)) -> String {
 /// of at most 2000 code points each, so that `decode` with
 /// `default_limits` can read it. A client joins those lines with LF, so
 /// the data it receives has an LF at each split. Data that has to arrive
-/// unchanged needs lines of at most 8000 bytes.
+/// unchanged needs lines of at most 8000 bytes. The `event` and `id` lines
+/// are never split, so a name or id longer than about 8000 bytes gives a
+/// stream that `decode` with `default_limits` rejects.
 ///
 /// ## Examples
 ///
@@ -284,8 +295,9 @@ fn split_long_line(line: String) -> List(String) {
 // Decoding -------------------------------------------------------------------
 
 /// Bounds on what the decoder accepts, so a peer cannot make it buffer
-/// without limit. Start from `default_limits` and change the fields you
-/// need:
+/// without limit. The values are not checked: 0 allows nothing of that
+/// kind except empty lines, and a negative value allows nothing. Start
+/// from `default_limits` and change the fields you need:
 ///
 /// ```gleam
 /// ssevents.Limits(..ssevents.default_limits, max_event_bytes: 200_000)
@@ -382,6 +394,9 @@ pub opaque type DecodeState {
     // False until the first bytes show whether the stream starts with a
     // byte order mark.
     bom_checked: Bool,
+    // True when the last line ended with a CR at the end of a chunk, so an
+    // LF at the start of the next chunk is the rest of a CRLF.
+    skip_lf: Bool,
     name: Option(String),
     // The `data` lines of the current event, last line first.
     data_lines: List(String),
@@ -401,6 +416,7 @@ pub fn new_decoder(limits: Limits) -> DecodeState {
     limits:,
     buffer: <<>>,
     bom_checked: False,
+    skip_lf: False,
     name: None,
     data_lines: [],
     data_line_count: 0,
@@ -431,6 +447,7 @@ pub fn push(
 ) -> Result(#(DecodeState, List(Item)), SseError) {
   DecodeState(..state, buffer: bit_array.append(state.buffer, chunk))
   |> skip_byte_order_mark
+  |> skip_lf_after_cr
   |> read_lines([])
 }
 
@@ -440,9 +457,7 @@ pub fn push(
 pub fn finish(state: DecodeState) -> Result(List(Item), SseError) {
   case state.buffer {
     <<>> -> Ok(option.values([dispatch(state).1]))
-    buffer -> {
-      // No byte can follow a CR now, so it ends the line.
-      let line = drop_trailing_cr(buffer)
+    line -> {
       use #(state, item) <- result.map(read_line(
         DecodeState(..state, buffer: <<>>),
         line,
@@ -463,6 +478,15 @@ fn skip_byte_order_mark(state: DecodeState) -> DecodeState {
   }
 }
 
+fn skip_lf_after_cr(state: DecodeState) -> DecodeState {
+  case state.skip_lf, state.buffer {
+    False, _ | True, <<>> -> state
+    True, <<10, rest:bytes>> ->
+      DecodeState(..state, buffer: rest, skip_lf: False)
+    True, _ -> DecodeState(..state, skip_lf: False)
+  }
+}
+
 fn read_lines(
   state: DecodeState,
   items: List(Item),
@@ -474,8 +498,14 @@ fn read_lines(
         True -> Error(LineTooLong(limit: max))
         False -> {
           let #(line, rest) = split_bytes(state.buffer, length, ending)
+          // A CR that ends the buffer ends the line now, so the event is
+          // not held back until the next chunk shows what follows it.
+          let skip_lf =
+            ending == 1
+            && rest == <<>>
+            && bit_array.slice(state.buffer, length, 1) == Ok(<<13>>)
           use #(state, item) <- result.try(read_line(
-            DecodeState(..state, buffer: rest),
+            DecodeState(..state, buffer: rest, skip_lf:),
             line,
           ))
           case item {
@@ -484,10 +514,8 @@ fn read_lines(
           }
         }
       }
-    // A CR at the end of the buffer may be the start of a CRLF. It ends the
-    // line either way, so it does not count towards the line's length.
     Error(Nil) ->
-      case bit_array.byte_size(drop_trailing_cr(state.buffer)) > max {
+      case bit_array.byte_size(state.buffer) > max {
         True -> Error(LineTooLong(limit: max))
         False -> Ok(#(state, list.reverse(items)))
       }
@@ -499,7 +527,6 @@ fn read_lines(
 fn line_end(bytes: BitArray, length: Int) -> Result(#(Int, Int), Nil) {
   case bytes {
     <<13, 10, _:bytes>> -> Ok(#(length, 2))
-    <<13>> -> Error(Nil)
     <<13, _:bytes>> | <<10, _:bytes>> -> Ok(#(length, 1))
     <<_, rest:bytes>> -> line_end(rest, length + 1)
     _ -> Error(Nil)
@@ -517,14 +544,6 @@ fn split_bytes(
     bit_array.slice(bytes, length + skip, size - length - skip)
     |> result.unwrap(<<>>)
   #(head, tail)
-}
-
-fn drop_trailing_cr(bytes: BitArray) -> BitArray {
-  let size = bit_array.byte_size(bytes)
-  case bit_array.slice(bytes, size - 1, 1) {
-    Ok(<<13>>) -> bit_array.slice(bytes, 0, size - 1) |> result.unwrap(bytes)
-    _ -> bytes
-  }
 }
 
 fn read_line(
@@ -646,7 +665,9 @@ fn dispatch(state: DecodeState) -> #(DecodeState, Option(Item)) {
     _ ->
       Some(
         EventItem(Event(
-          name: option.map(state.name, clean_field),
+          name: option.then(state.name, fn(name) {
+            name_field(clean_field(name))
+          }),
           data: state.data_lines
             |> list.reverse
             |> string.join(with: "\n")
@@ -661,6 +682,7 @@ fn dispatch(state: DecodeState) -> #(DecodeState, Option(Item)) {
       ..new_decoder(state.limits),
       buffer: state.buffer,
       bom_checked: state.bom_checked,
+      skip_lf: state.skip_lf,
     )
   #(next, item)
 }
@@ -685,15 +707,21 @@ pub type ReconnectState {
   ReconnectState(last_event_id: Option(String), retry: Option(Int))
 }
 
-/// Keeps the `id` and `retry` of an event, if it has them. Comments leave
-/// the state as it is.
+/// Keeps the `id` and `retry` of an event, if it has them. An empty `id`
+/// sets `last_event_id` back to `None`, as a browser then sends no
+/// `Last-Event-ID`. Comments leave the state as it is.
 ///
 pub fn update_reconnect(state: ReconnectState, item: Item) -> ReconnectState {
   case item {
     CommentItem(_) -> state
     EventItem(event) ->
       ReconnectState(
-        last_event_id: option.or(event.id, state.last_event_id),
+        last_event_id: case event.id {
+          // An empty id resets it, and no header is sent.
+          Some("") -> None
+          Some(id) -> Some(id)
+          None -> state.last_event_id
+        },
         retry: option.or(event.retry, state.retry),
       )
   }

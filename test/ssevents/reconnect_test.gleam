@@ -21,7 +21,7 @@ pub fn reconnect_state_tracks_last_id_and_retry_test() {
   ))
 }
 
-pub fn reconnect_state_keeps_values_an_event_does_not_set_test() {
+pub fn reconnect_state_keeps_retry_and_resets_on_empty_id_test() {
   let items = [
     ssevents.EventItem(
       ssevents.new("a") |> ssevents.id("1") |> ssevents.retry(10),
@@ -30,5 +30,5 @@ pub fn reconnect_state_keeps_values_an_event_does_not_set_test() {
     ssevents.EventItem(ssevents.new("c") |> ssevents.id("")),
   ]
   list.fold(items, ReconnectState(None, None), ssevents.update_reconnect)
-  |> should.equal(ReconnectState(last_event_id: Some(""), retry: Some(10)))
+  |> should.equal(ReconnectState(last_event_id: None, retry: Some(10)))
 }
