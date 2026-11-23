@@ -94,7 +94,7 @@ The API reference is on [HexDocs](https://hexdocs.pm/ssevents/).
 ## Notes
 
 - `named`, `id` and `comment` remove CR, LF and NUL, and `new` turns CR into LF and removes NUL, so a value from a user cannot add lines or fields to the stream.
-- `encode` splits a `data` line longer than 8000 bytes into lines of at most 2000 code points, so that `decode` with `default_limits` can read it. The client joins them with LF, so the data it receives has an LF at each split.
+- `encode` splits a `data` line longer than 8000 bytes into lines of at most 2000 code points, so that `decode` with `default_limits` can read it. The client joins them with LF, so the data it receives has an LF at each split. `event` and `id` lines are not split, so keep names and ids well under 8000 bytes.
 - `retry` removes the field for a value below 0 or above 86_400_000 (24 hours), and `decode` ignores a larger value than `max_retry_value`.
 - `decode` returns an event at the end of the input even without its closing blank line, which a browser would drop. It does not return a block that has no `data` line, so an `id` or `retry` sent on its own does not reach `ReconnectState`.
 
