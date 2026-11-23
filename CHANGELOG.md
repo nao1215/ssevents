@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+The public API is smaller: the 10 public modules become `ssevents`, and 151 public functions become 19. Code that used the old modules needs updating.
+
+- `ssevents/event`, `encoder`, `decoder`, `error`, `limit`, `reconnect`, `heartbeat`, `validate` and `stream` are removed. `Event`, `Comment`, `Item`, `Limits`, `DecodeState`, `ReconnectState` and `SseError` are defined in `ssevents`, the re-export aliases are gone, and `EventItem` and `CommentItem` can be matched with one import.
+- `decode(input, limits)` takes a `BitArray` and the limits. `decode_bytes`, `decode_with_limits` and `decode_bytes_with_limits` are removed. `new_decoder(limits)` replaces `new_decoder()` and `new_decoder_with_limits`.
+- `Limits` is a plain record and `default_limits` is a constant: write `Limits(..ssevents.default_limits, max_event_bytes: 200_000)`. `limits()`, `default_limits()`, `new_limits`, `limit.new_checked`, `LimitConfigError`, `with_max_event_size`, the `max_*` getters, `max_event_size` and the `default_max_*` constants are removed. Limit values below 1 are no longer rejected; a limit of 0 allows nothing of that kind.
+- `with_strict_retry_cap` and `strict_retry_cap` are removed. A `retry` above `max_retry_value` is always ignored, and the `InvalidRetry` variant is removed with it.
+- `encode` and `encode_items` return LF-terminated `String`s. `encode_bytes`, `encode_item`, `encode_item_bytes`, `encode_items_bytes`, `LineEnding`, `default_line_ending` and the three `*_with_line_ending` functions are removed. Use `encode_items([item])` for one item and `bit_array.from_string` for bytes.
+- `retry` removes the field for a value below 0 instead of panicking, as it already did above 86_400_000. `retry_clamp` is removed.
+- `named(name, data)` is the only way to set the event name. The `event` and `data` setters, `message`, `from_parts` and `event_item` are removed; wrap an event with `EventItem(event)`.
+- The `*_checked` builders, `EventError`, `validate_event_name`, `validate_id`, `validate_retry` and `max_data_bytes` are removed. `named`, `id` and `comment` remove CR, LF and NUL, as before.
+- `comment(text)` still returns an `Item`, and `comment_text(comment)` replaces `comment_text_of`. `heartbeat` and `heartbeat_text` are removed: write `comment("heartbeat")`.
+- `is_event`, `is_comment`, `event_of_item`, `comment_text_of_item`, `events_of` and `comment_texts_of` are removed; match on `EventItem` and `CommentItem`.
+- `ReconnectState` is a record with `last_event_id` and `retry` fields. `new_reconnect_state`, `last_event_id`, `retry_interval` and `last_event_id_header` are removed; start from `ReconnectState(last_event_id: None, retry: None)`.
+- The `Iterator` type and its functions (`empty_iterator`, `iterator_from_list`, `iterator_to_list`, `iterator_next`, `encode_stream`, `decode_stream`, `decode_stream_with_limits`) are removed. Feed chunks to `push` and `finish`.
+- `package_name`, `default_content_type` and the `InvalidField`, `UnexpectedEnd` and `UnsupportedFeature` variants, which nothing returned, are removed. `content_type()` stays.
+
+Before:
+
+```gleam
+import ssevents
+import ssevents/event.{EventItem}
+
+let body =
+  [
+    ssevents.heartbeat(),
+    ssevents.new("hi")
+      |> ssevents.event("greet")
+      |> ssevents.retry_clamp(ms)
+      |> ssevents.event_item,
+  ]
+  |> ssevents.encode_items_bytes
+let limits = ssevents.default_limits() |> ssevents.with_max_event_size(200_000)
+let assert Ok([_, EventItem(event)]) =
+  ssevents.decode_bytes_with_limits(body, limits: limits)
+```
+
+After:
+
+```gleam
+import ssevents.{EventItem}
+
+let body =
+  ssevents.encode_items([
+    ssevents.comment("heartbeat"),
+    ssevents.named("greet", "hi") |> ssevents.retry(ms) |> EventItem,
+  ])
+let limits =
+  ssevents.Limits(..ssevents.default_limits, max_event_bytes: 200_000)
+let assert Ok([_, EventItem(event)]) = ssevents.decode(<<body:utf8>>, limits)
+```
+
+### Fixed
+
+- `encode` splits a long `data` line every 2000 code points. It counted graphemes, so data made of emoji with joiners or of combining marks gave a line over 8192 bytes, which `decode` with the default limits rejected with `LineTooLong(8192)`.
+- On JavaScript, `decode` and `push` dropped a U+FEFF at the start of a line or of a field value, so `"\u{FEFF}data: b"` was read as a `data` field and `"data:\u{FEFF}x"` gave `"x"`. Erlang kept the character. Both targets now keep it.
+- A NUL in an `event:` field no longer fails the whole stream with `InvalidField("event")`. It is removed from the name, as `named` does.
+
 ## [0.16.0] - 2026-11-19
 
 ### Fixed
