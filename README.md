@@ -7,219 +7,102 @@
 [![Hex](https://img.shields.io/hexpm/v/ssevents)](https://hex.pm/packages/ssevents)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/ssevents/)
 [![Hex Downloads](https://img.shields.io/hexpm/dt/ssevents)](https://hex.pm/packages/ssevents)
-[![License](https://img.shields.io/github/license/nao1215/ssevents)](./LICENSE)
+[![License](https://img.shields.io/github/license/nao1215/ssevents)](https://github.com/nao1215/ssevents/blob/main/LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/nao1215/ssevents/badge)](https://scorecard.dev/viewer/?uri=github.com/nao1215/ssevents)
 
-`ssevents` encodes and decodes Server-Sent Events (SSE) in Gleam on
-Erlang and JavaScript. It handles events and comments, full-body and
-incremental decoding, reconnect metadata, validation, and chunk-stream
-adapters in `ssevents/stream`. It does not depend on any web framework,
-HTTP client, timer, filesystem or database, so client and server
-libraries can both use it. The full API is on
-[HexDocs](https://hexdocs.pm/ssevents/).
 
-## Install
+Encode and decode Server-Sent Events, the `text/event-stream` format, in Gleam on Erlang and JavaScript.
+
+A server builds events with `new` or `named` and writes them with `encode_items`. A client reads a body with `decode`, or chunk by chunk with `push`, within limits on line, event and `data` sizes. The decoder follows the WHATWG event stream rules and gives the same items on both targets however the input is split. It needs only `gleam_stdlib`, so any HTTP server or client can use it.
 
 ```sh
-gleam add ssevents
+gleam add ssevents@0
 ```
 
 ## Usage
 
-### Encode
+This is [`examples/quick_start`](https://github.com/nao1215/ssevents/tree/main/examples/quick_start), which CI runs.
 
 ```gleam
-import ssevents
+import gleam/io
+import gleam/list
+import gleam/string
+import ssevents.{CommentItem, EventItem}
 
-pub fn encode_response_body() -> String {
-  [
-    ssevents.comment("stream opened"),
-    ssevents.named("job.started", "job-123")
-    |> ssevents.id("cursor-1")
-    |> ssevents.retry(5000)
-    |> ssevents.event_item,
-    ssevents.heartbeat(),
-  ]
-  |> ssevents.encode_items
+pub fn main() {
+  let body =
+    ssevents.encode_items([
+      ssevents.comment("stream opened"),
+      ssevents.named("job.started", "build #42")
+        |> ssevents.id("cursor-1")
+        |> ssevents.retry(5000)
+        |> EventItem,
+      EventItem(ssevents.new("step 1/3\nrunning lints")),
+    ])
+  io.print(body)
+
+  let assert Ok(items) = ssevents.decode(<<body:utf8>>, ssevents.default_limits)
+  list.each(items, fn(item) {
+    case item {
+      EventItem(event) ->
+        io.println("event data: " <> string.inspect(ssevents.data_of(event)))
+      CommentItem(comment) ->
+        io.println("comment: " <> ssevents.comment_text(comment))
+    }
+  })
 }
 ```
-
-The returned string:
 
 ```text
 : stream opened
 event: job.started
 id: cursor-1
 retry: 5000
-data: job-123
+data: build #42
 
-: heartbeat
+data: step 1/3
+data: running lints
+
+comment: stream opened
+event data: "build #42"
+event data: "step 1/3\nrunning lints"
 ```
 
-`encode` works on one `Event`, `encode_item` on one `Item` (event or
-comment), and `encode_items` on a `List(Item)`. Each has a `*_bytes`
-variant that returns a `BitArray` for response bodies and sockets.
-
-`retry/2` panics on a negative value, because WHATWG SSE §9.2.6 only
-allows a non-negative reconnection time. For untrusted input use
-`ssevents.retry_clamp/2`, which raises negative values to `0` and turns
-values above the 24 h cap (`limit.default_max_retry_value`) into `None`,
-so no `retry:` line is written; `retry/2` and `from_parts/4` drop at the
-same boundary, so the default decoder round-trips. For untrusted names,
-ids or comment text, the `*_checked` variants (`event_checked`,
-`id_checked`, `named_checked`, `comment_checked`) return an
-`EventError` for CR / LF / NUL instead of stripping them.
-
-### Decode a full body
+A client that reads a response body in chunks gives each chunk to `push` and calls `finish` at the end. Use tighter limits than `default_limits` for a peer you do not trust:
 
 ```gleam
-import ssevents
-
-pub fn decode_example(body: BitArray) {
-  case ssevents.decode_bytes(body) {
-    Ok(items) -> items
-    Error(error) -> [ssevents.comment(ssevents.error_to_string(error))]
-  }
-}
-```
-
-### Incremental decode
-
-```gleam
-import ssevents
-
-pub fn incremental_decode() {
-  let state = ssevents.new_decoder()
-  let assert Ok(#(state, items1)) =
-    ssevents.push(state, <<"data: hel":utf8>>)
-  let assert [] = items1
-
-  let assert Ok(#(state, items2)) =
-    ssevents.push(state, <<"lo\n\n":utf8>>)
-  let assert [item] = items2
-
-  let assert Ok(items3) = ssevents.finish(state)
-  #(item, items3)
-}
-```
-
-### Stream adapter
-
-```gleam
-import ssevents
-
-pub fn streaming_example() {
-  let chunks =
-    ssevents.iterator_from_list([
-      <<"data: first\n\n":utf8>>,
-      <<"data: second\n\n":utf8>>,
-    ])
-
-  chunks
-  |> ssevents.decode_stream
-  |> ssevents.iterator_to_list
-}
-```
-
-### Decoding untrusted input
-
-The defaults suit development and trusted peers. For an untrusted peer,
-set the four limits to match your traffic:
-
-```gleam
-import ssevents
-
-pub fn safe_decode(body: BitArray) {
+pub fn read_body(chunks: List(BitArray)) {
   let limits =
-    ssevents.new_limits(
-      max_line_bytes: 4096,
-      max_event_bytes: 65536,
-      max_data_lines: 256,
-      max_retry_value: 60000,
-    )
-
-  ssevents.decode_bytes_with_limits(body, limits: limits)
-}
-```
-
-See [SECURITY.md](SECURITY.md) for the project security policy.
-
-### Track reconnect metadata
-
-```gleam
-import ssevents
-
-pub fn reconnect_example(item: ssevents.Item) {
-  let state =
-    ssevents.new_reconnect_state()
-    |> ssevents.update_reconnect(item)
-
-  #(
-    ssevents.last_event_id(state),
-    ssevents.retry_interval(state),
-    ssevents.last_event_id_header(state),
+    ssevents.Limits(..ssevents.default_limits, max_event_bytes: 16_384)
+  let start = #(ssevents.new_decoder(limits), [])
+  use #(decoder, items) <- result.try(
+    list.try_fold(chunks, start, fn(acc, chunk) {
+      let #(decoder, items) = acc
+      use #(decoder, new) <- result.map(ssevents.push(decoder, chunk))
+      #(decoder, list.append(items, new))
+    }),
   )
+  use rest <- result.map(ssevents.finish(decoder))
+  list.append(items, rest)
 }
 ```
 
-### Runnable examples
+`update_reconnect` folds the items into a `ReconnectState` that holds the `id` to send back in `Last-Event-ID` and the last `retry`. [`examples/`](https://github.com/nao1215/ssevents/tree/main/examples) also shows the chunks a server writes, the response headers an SSE endpoint needs, and a browser client.
 
-[`examples/`](./examples/) has standalone Gleam projects for emitting
-from a server and consuming chunked input, plus notes on HTTP headers,
-browser clients and reconnects. Run one with
-`cd examples/<name> && gleam run`. `quick_start` prints:
+The API reference is on [HexDocs](https://hexdocs.pm/ssevents/).
 
-```text
-wrote 158 bytes of SSE
-decoded 4 items:
-- comment: stream opened
-- event job.started, id=cursor-1, retry=5000ms: build #42
-- event job.progress, id=cursor-2: step 1/3
-running lints
-- comment: heartbeat
-```
+## Notes
 
-## Development
+- `named`, `id` and `comment` remove CR, LF and NUL, and `new` turns CR into LF and removes NUL, so a value from a user cannot add lines or fields to the stream.
+- `encode` splits a `data` line longer than 8000 bytes into lines of at most 2000 code points, so that `decode` with `default_limits` can read it. The client joins them with LF, so the data it receives has an LF at each split.
+- `retry` removes the field for a value below 0 or above 86_400_000 (24 hours), and `decode` ignores a larger value than `max_retry_value`.
+- `decode` returns an event at the end of the input even without its closing blank line, which a browser would drop. It does not return a block that has no `data` line, so an `id` or `retry` sent on its own does not reach `ReconnectState`.
 
-```sh
-mise install
-just ci
-```
-
-## Release process
-
-The version is in [`gleam.toml`](./gleam.toml) and the notes are in
-[`CHANGELOG.md`](./CHANGELOG.md). Add entries under `[Unreleased]` while
-developing. To release:
-
-1. Bump `version = "X.Y.Z"` in `gleam.toml`.
-2. In `CHANGELOG.md`, rename `[Unreleased]` to `[X.Y.Z] - YYYY-MM-DD`
-   and add a new empty `[Unreleased]` above it.
-3. Merge the bump to `main`, then push a `vX.Y.Z` tag.
-
-The tag runs
-[`.github/workflows/release.yml`](./.github/workflows/release.yml),
-which runs the checks, publishes to Hex, and creates a GitHub Release
-whose body is the `[X.Y.Z]` section. If that section is missing or
-misnamed, the release notes are empty.
-
-## Testing
-
-| Technique | Bug class caught here |
-|---|---|
-| Examples and unit tests | [Departures from the WHATWG event stream rules](doc/testing.md#examples-and-unit-tests) |
-| Generated properties | [Encode / decode round trips that change data, names, ids or retry](doc/testing.md#generated-properties) |
-| Chunk parity | [Incremental decoding that depends on where chunks split](doc/testing.md#chunk-parity) |
-| Differential testing | [One-shot and incremental decoders disagreeing on odd input or at limits](doc/testing.md#differential-testing) |
-| Boundary values | [Off-by-one limit and validation checks](doc/testing.md#boundary-values) |
-| Nightly runs | [Rare inputs the normal run count misses](doc/testing.md#nightly-runs) |
-| Mutation testing | [Assertions that miss a changed operator or branch](doc/testing.md#mutation-testing) |
+How the package is tested is described in [doc/testing.md](https://github.com/nao1215/ssevents/blob/main/doc/testing.md).
 
 ## Verifying releases
 
-Each GitHub Release attaches the Hex package tarball (`ssevents-<version>.tar`),
-`checksums.txt`, a cosign signature bundle (`checksums.txt.sigstore.json`) and
-build provenance (`ssevents-<version>.intoto.jsonl`). Download the assets, then:
+Each GitHub Release attaches the Hex package tarball (`ssevents-<version>.tar`), `checksums.txt`, a cosign signature bundle (`checksums.txt.sigstore.json`) and build provenance (`ssevents-<version>.intoto.jsonl`). Download the assets, then:
 
 ```sh
 gh attestation verify ssevents-<version>.tar --repo nao1215/ssevents
@@ -234,4 +117,4 @@ sha256sum --check checksums.txt
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](https://github.com/nao1215/ssevents/blob/main/LICENSE)

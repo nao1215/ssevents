@@ -4,7 +4,7 @@
 
 ## Examples and unit tests
 
-`test/ssevents/*_test.gleam` checks the decoder, the encoder, event construction, validation, limits and reconnect state against the WHATWG event stream rules with fixed inputs. Each fixed bug keeps its reproduction in a `regression_*_test.gleam` file or next to the related tests.
+`test/ssevents/*_test.gleam` checks the decoder, the encoder, event construction, limits and reconnect state against the WHATWG event stream rules with fixed inputs. Each fixed bug keeps its reproduction in a `regression_*_test.gleam` file or next to the related tests. `test/readme_test.gleam` runs the README example and the examples in the doc comments.
 
 ## Generated properties
 
@@ -12,15 +12,15 @@
 
 ## Chunk parity
 
-`test/ssevents/parity_test.gleam` feeds a corpus of encoded streams to the incremental decoder in chunks of many sizes and at every split position, with LF, CRLF and a leading BOM, and requires the same items as the one-shot decoder. `test/ssevents/encode_determinism_test.gleam` checks that the encoders agree with each other.
+`test/ssevents/parity_test.gleam` feeds a corpus of encoded streams to the incremental decoder in chunks of many sizes and at every split position, with LF, CRLF and a leading BOM, and requires the same items as the one-shot decoder. `test/ssevents/encode_determinism_test.gleam` checks that the encoded text does not depend on the order of the builder calls.
 
 ## Differential testing
 
-`test/ssevents/limits_differential_test.gleam` compares the one-shot decoder (`decode_bytes_with_limits`) with the incremental one (`push` / `finish`) on random wire text the encoder never writes: LF, CRLF and lone CR mixed, unknown fields, fields without a colon, NUL in ids, bad and oversized retry values and comments, cut into random chunk sizes. Both must return the same items or the same error with the default limits and with each limit set one below, at and one above what the input needs. This test found that a CR at the end of a chunk was counted towards `max_line_bytes`.
+`test/ssevents/limits_differential_test.gleam` compares the one-shot decoder (`decode`) with the incremental one (`push` / `finish`) on random wire text the encoder never writes: LF, CRLF and lone CR mixed, unknown fields, fields without a colon, NUL in ids, bad and oversized retry values and comments, cut into random chunk sizes. Both must return the same items or the same error with the default limits and with each limit set one below, at and one above what the input needs. This test found that a CR at the end of a chunk was counted towards `max_line_bytes`.
 
 ## Boundary values
 
-`test/ssevents/boundary_test.gleam` checks the limit and validation checks both decoders share exactly at their thresholds: an event of exactly `max_event_bytes`, `max_data_bytes` at and below the data size, 0 and 1 as limit values, a retry of 0, an empty retry value and CR / LF / NUL in names and ids.
+`test/ssevents/boundary_test.gleam` checks the limits both decoders share exactly at their thresholds: a line of exactly `max_line_bytes`, an event of exactly `max_event_bytes`, exactly `max_data_lines`, 0 as every limit, a retry of 0, an empty retry value and CR / LF / NUL in names and ids.
 
 ## Nightly runs
 
@@ -35,9 +35,4 @@ There is no mutation testing tool for Gleam, so `gleam_mutate.py` (from the muta
 | 2026-11-19 | every module under `src/`, with the differential test | 38 | 13 | 74.5% |
 | 2026-11-19 | the same, plus `test/ssevents/boundary_test.gleam` | 45 | 6 | 88.2% |
 
-The differential test cannot see a threshold that moves in both decoders at once, because they share the limit checks; `boundary_test.gleam` pins those checks at their thresholds. The remaining survivors:
-
-- `encoder.chunk_data_line` (2): the 2000-code-point split of very long data lines, where `<=` and `<` only differ for a line of exactly 8000 bytes, which also stays one line after the split.
-- `event.retry_clamp` (1): clamping 0 to 0.
-- `decoder.is_ascii_digit_string` and `ends_with_cr` (2): an empty retry value fails `int.parse` and an empty buffer has no trailing CR either way.
-- `validate.contains_forbidden_bytes` (1): the arm for a non-byte-aligned bit array, which a `String` never produces.
+The differential test cannot see a threshold that moves in both decoders at once, because they share the limit checks; `boundary_test.gleam` pins those checks at their thresholds. Both runs predate 0.17.0, which merged the modules into `src/ssevents.gleam` and removed or rewrote the code the six survivors were in.
