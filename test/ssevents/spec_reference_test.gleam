@@ -17,7 +17,6 @@ import gleam/option.{type Option, None, Some}
 import gleam/string
 import metamon
 import metamon/generator.{type Generator}
-import metamon/generator/range
 import ssevents.{EventItem, ReconnectItem}
 import support
 
@@ -259,7 +258,7 @@ fn piece_gen() -> Generator(BitArray) {
 fn wire_gen() -> Generator(BitArray) {
   generator.tuple2(
     generator.bool(),
-    generator.list_of(piece_gen(), range.constant(0, 40)),
+    generator.list_of(piece_gen(), generator.range(from: 0, to: 40)),
   )
   |> generator.map(fn(input) {
     let #(bom, pieces) = input
@@ -272,7 +271,10 @@ fn wire_gen() -> Generator(BitArray) {
 }
 
 fn sizes_gen() -> Generator(List(Int)) {
-  generator.list_of(generator.int(range.constant(1, 7)), range.constant(1, 4))
+  generator.list_of(
+    generator.int(generator.range(from: 1, to: 7)),
+    generator.range(from: 1, to: 4),
+  )
 }
 
 fn decode(bytes: BitArray) -> Result(List(ssevents.Item), ssevents.SseError) {
@@ -319,19 +321,21 @@ fn push_chunks(
 // Properties ------------------------------------------------------------------
 
 pub fn decode_matches_the_reference_test() -> Nil {
-  metamon.forall(wire_gen(), fn(wire) { decode(wire) == Ok(reference(wire)) })
+  metamon.forall(wire_gen(), fn(wire) {
+    assert decode(wire) == Ok(reference(wire))
+  })
 }
 
 pub fn chunking_does_not_change_the_items_test() -> Nil {
   metamon.forall(generator.tuple2(wire_gen(), sizes_gen()), fn(input) {
     let #(wire, sizes) = input
-    decode_in_chunks(wire, sizes) == decode(wire)
+    assert decode_in_chunks(wire, sizes) == decode(wire)
   })
 }
 
 pub fn one_byte_chunks_match_the_reference_test() -> Nil {
   metamon.forall(wire_gen(), fn(wire) {
-    decode_in_chunks(wire, [1]) == Ok(reference(wire))
+    assert decode_in_chunks(wire, [1]) == Ok(reference(wire))
   })
 }
 
@@ -347,16 +351,20 @@ pub fn line_ending_does_not_change_the_items_test() -> Nil {
           piece,
         )
       }),
-      range.constant(0, 6),
+      generator.range(from: 0, to: 6),
     )
     |> generator.map(bit_array.concat)
-  metamon.forall(generator.list_of(line, range.constant(0, 8)), fn(lines) {
-    let wire = fn(ending) {
-      lines |> list.map(fn(l) { <<l:bits, ending:bits>> }) |> bit_array.concat
-    }
-    let lf = decode(wire(<<"\n":utf8>>))
-    decode(wire(<<"\r\n":utf8>>)) == lf && decode(wire(<<"\r":utf8>>)) == lf
-  })
+  metamon.forall(
+    generator.list_of(line, generator.range(from: 0, to: 8)),
+    fn(lines) {
+      let wire = fn(ending) {
+        lines |> list.map(fn(l) { <<l:bits, ending:bits>> }) |> bit_array.concat
+      }
+      let lf = decode(wire(<<"\n":utf8>>))
+      assert decode(wire(<<"\r\n":utf8>>)) == lf
+      assert decode(wire(<<"\r":utf8>>)) == lf
+    },
+  )
 }
 
 pub fn reference_follows_the_examples_in_the_standard_test() -> Nil {

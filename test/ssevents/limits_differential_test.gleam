@@ -11,14 +11,13 @@ import gleam/list
 import gleam/string
 import metamon
 import metamon/generator.{type Generator}
-import metamon/generator/range
 import ssevents
 
 fn line_gen() -> Generator(String) {
   let value =
     generator.list_of(
       generator.element_of(["a", "Z", "9", " ", ":", "\u{00E9}", "\u{0000}"]),
-      range.constant(0, 6),
+      generator.range(from: 0, to: 6),
     )
     |> generator.map(string.concat)
   generator.one_of([
@@ -42,7 +41,7 @@ fn line_gen() -> Generator(String) {
 fn wire_gen() -> Generator(BitArray) {
   generator.list_of(
     generator.tuple2(line_gen(), generator.element_of(["\n", "\r\n", "\r"])),
-    range.constant(0, 12),
+    generator.range(from: 0, to: 12),
   )
   |> generator.map(fn(lines) {
     lines
@@ -101,14 +100,18 @@ fn push_all(
 }
 
 fn sizes_gen() -> Generator(List(Int)) {
-  generator.list_of(generator.int(range.constant(1, 9)), range.constant(1, 5))
+  generator.list_of(
+    generator.int(generator.range(from: 1, to: 9)),
+    length: generator.range(from: 1, to: 5),
+  )
 }
 
 pub fn incremental_matches_one_shot_with_default_limits_test() -> Nil {
   metamon.forall(generator.tuple2(wire_gen(), sizes_gen()), fn(input) {
     let #(wire, sizes) = input
     let limits = ssevents.default_limits
-    incremental(chunks(wire, sizes), limits) == ssevents.decode(wire, limits)
+    assert incremental(chunks(wire, sizes), limits)
+      == ssevents.decode(wire, limits)
   })
 }
 
@@ -140,14 +143,14 @@ pub fn incremental_matches_one_shot_at_limit_boundaries_test() -> Nil {
       sizes_gen(),
       generator.tuple2(
         generator.element_of(["line", "event", "data", "retry"]),
-        generator.int(range.constant(-1, 1)),
+        generator.int(generator.range(from: -1, to: 1)),
       ),
     ),
     boundary_property,
   )
 }
 
-fn boundary_property(input: #(BitArray, List(Int), #(String, Int))) -> Bool {
+fn boundary_property(input: #(BitArray, List(Int), #(String, Int))) -> Nil {
   let #(wire, sizes, #(which, delta)) = input
   let #(longest, total, data_lines) = needs(wire)
   let at = fn(n) {
@@ -163,5 +166,6 @@ fn boundary_property(input: #(BitArray, List(Int), #(String, Int))) -> Bool {
     "data" -> ssevents.Limits(..defaults, max_data_lines: at(data_lines))
     _ -> ssevents.Limits(..defaults, max_retry_value: at(10))
   }
-  incremental(chunks(wire, sizes), limits) == ssevents.decode(wire, limits)
+  assert incremental(chunks(wire, sizes), limits)
+    == ssevents.decode(wire, limits)
 }

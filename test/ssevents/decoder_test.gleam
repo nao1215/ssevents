@@ -532,3 +532,28 @@ pub fn push_keeps_blank_line_after_crlf_at_chunk_end_test() {
   let assert Ok(#(_, items)) = ssevents.push(decoder, <<"\n":utf8>>)
   items |> should.equal([EventItem(ssevents.new("a"))])
 }
+
+pub fn push_strips_the_byte_order_mark_only_at_the_start_of_the_stream_test() {
+  // A chunk that starts with EF BB BF later in the stream is not the start
+  // of the stream: the mark stays and makes the field name unknown, whether
+  // the first chunk had a mark or not.
+  let later = <<0xEF, 0xBB, 0xBF, "data: b\n\n":utf8>>
+  [<<0xEF, 0xBB, 0xBF, "data: a\n\n":utf8>>, <<"data: a\n\n":utf8>>]
+  |> list.each(fn(first) {
+    let state = ssevents.new_decoder(ssevents.default_limits)
+    let assert Ok(#(state, first_items)) = ssevents.push(state, first)
+    let assert Ok(#(_, later_items)) = ssevents.push(state, later)
+    assert #(first_items, later_items) == #([EventItem(ssevents.new("a"))], [])
+  })
+}
+
+pub fn push_reads_an_lf_after_a_cr_that_ended_an_earlier_chunk_test() {
+  // The LF that may follow a CR is skipped only at the start of the next
+  // chunk. Here the next chunk starts with another line, so a later LF is
+  // a blank line again and dispatches the event.
+  let state = ssevents.new_decoder(ssevents.default_limits)
+  let assert Ok(#(state, [])) = ssevents.push(state, <<"data: a\r":utf8>>)
+  let assert Ok(#(state, [])) = ssevents.push(state, <<"data: b\n":utf8>>)
+  let assert Ok(#(_, items)) = ssevents.push(state, <<"\n":utf8>>)
+  assert items == [EventItem(ssevents.new("a\nb"))]
+}
