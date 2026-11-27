@@ -1,6 +1,6 @@
 # Testing
 
-`just ci` runs everything below except the nightly job and mutation testing. Tests run on the Erlang and JavaScript targets, on the Gleam floor (1.14.0, OTP 27, Node 22) and on the latest Gleam 1.x, and `just examples` builds and runs every program under `examples/`.
+`just ci` runs everything below except the nightly job and mutation testing (`just mutation`). Tests run on the Erlang and JavaScript targets, on the Gleam floor (1.14.0, OTP 27, Node 22) and on the latest Gleam 1.x, and `just examples` builds and runs every program under `examples/`.
 
 ## Examples and unit tests
 
@@ -43,16 +43,17 @@
 
 ## Nightly runs
 
-`.github/workflows/nightly-property.yml` runs the whole suite ten times with `METAMON_RUNS_MULTIPLIER=10`, each pass with a new seed. A failure report prints its seed, so the case can be replayed with `metamon.with_seed` and kept as a regression test.
+`.github/workflows/nightly-property.yml` runs the whole suite ten times with `METAMON_RUNS_MULTIPLIER=10`, each pass with a new seed. A failure report prints its seed, so the case can be replayed with `metamon.Config(..metamon.default_config(), seed: Some(seed))` and kept as a regression test.
 
 ## Mutation testing
 
-There is no mutation testing tool for Gleam, so `gleam_mutate.py` (from the mutation-testing lab in nao1215/debimate, with integer comparison and arithmetic operators added) is run by hand on a copy of the project. It rewrites one operator or boolean result at a time (`==`/`!=`, `<`/`<=`, `>`/`>=`, `+`/`-`, `&&`/`||`, `-> True`/`-> False`, a dropped `!`) and runs `gleam test` on the Erlang target. The score is killed / (killed + lived).
+`gleam run -m metamon/mutation` changes one operator, `!` or boolean literal in `src/ssevents.gleam` at a time and runs `gleam test --target erlang` on each change. `.github/workflows/mutation.yml` mutates the module on every pull request that changes it and fails on a survivor that `doc/mutation/baseline.json` does not list; the weekly run does the same.
 
-| Date | File | Killed | Lived | Score |
-|---|---|---:|---:|---:|
-| 2026-11-23 | `src/ssevents.gleam` | 47 | 9 | 83.9% |
-| 2026-11-23 | the same, with tests for the edges of each UTF-8 range and an 8000-byte `data` line | 52 | 4 | 92.9% |
-| 2026-11-23 | the four survivors again, with those edges on a line that also holds an invalid byte | 56 | 0 | 100% |
+The first run with it (2026-11-27) scored 93.4%, with more mutants than the hand-run tool of 2026-11-23 because it also changes the boolean fields of records. Tests were added for a byte order mark at the start of a later chunk, after a first chunk with or without one, and the score rose to 96.7%. The two survivors left change nothing: the decoder starts with `skip_lf: False`, and starting with `True` only skips an LF at the very start of the stream, which is a blank line with no event to dispatch; and `skip_lf_after_cr` clearing the flag when the next chunk starts with another byte, since the next line end in that chunk sets the flag again and, until then, the buffer is not empty.
 
-The survivors were the range checks of the UTF-8 decoder, which only run on a line that holds an invalid byte, and the 8000-byte threshold of the `data` line split, which has since been removed. Tables measured before the modules were merged into `src/ssevents.gleam` are dropped, because that code no longer exists. To measure again, copy the project, run `python3 gleam_mutate.py <copy> src/ssevents.gleam <result.json>` from the copy's parent, and after adding tests run it again with `--recheck <result.json>` to retry only the survivors.
+<!-- mutation:start -->
+| Module | Killed | Lived | Timed out | Score |
+|---|---:|---:|---:|---:|
+| `ssevents` | 59 | 2 | 0 | 96.7% |
+| all | 59 | 2 | 0 | 96.7% |
+<!-- mutation:end -->

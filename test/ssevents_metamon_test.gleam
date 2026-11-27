@@ -11,7 +11,6 @@ import gleam/option.{None, Some}
 import gleam/string
 import metamon
 import metamon/generator
-import metamon/generator/range
 import ssevents.{CommentItem, EventItem}
 import support
 
@@ -25,12 +24,18 @@ fn safe_text_generator() -> generator.Generator(String) {
   // Restrict to alphanumeric so the encode → decode round-trip is
   // unambiguous: CR, LF and NUL are removed from names and ids when the
   // event is built (#39), which other tests pin.
-  generator.string_alphanumeric(range.constant(0, 12))
+  generator.string(
+    of: generator.Alphanumeric,
+    length: generator.range(from: 0, to: 12),
+  )
   |> generator.no_edges
 }
 
 fn safe_non_empty_text_generator() -> generator.Generator(String) {
-  generator.string_alphanumeric(range.constant(1, 8))
+  generator.string(
+    of: generator.Alphanumeric,
+    length: generator.range(from: 1, to: 8),
+  )
   |> generator.no_edges
 }
 
@@ -39,10 +44,13 @@ fn safe_non_empty_text_generator() -> generator.Generator(String) {
 pub fn new_data_round_trips_test() -> Nil {
   metamon.forall(safe_text_generator(), fn(data) {
     let evt = ssevents.new(data)
-    ssevents.data_of(evt) == data
-    && ssevents.name_of(evt) == None
-    && ssevents.id_of(evt) == None
-    && ssevents.retry_of(evt) == None
+    assert #(
+        ssevents.data_of(evt),
+        ssevents.name_of(evt),
+        ssevents.id_of(evt),
+        ssevents.retry_of(evt),
+      )
+      == #(data, None, None, None)
   })
 }
 
@@ -52,7 +60,8 @@ pub fn named_sets_name_and_data_test() -> Nil {
     fn(pair) {
       let #(name, data) = pair
       let evt = support.named(name, data)
-      ssevents.name_of(evt) == Some(name) && ssevents.data_of(evt) == data
+      assert #(ssevents.name_of(evt), ssevents.data_of(evt))
+        == #(Some(name), data)
     },
   )
 }
@@ -63,7 +72,7 @@ pub fn id_setter_round_trips_test() -> Nil {
     fn(pair) {
       let #(data, id) = pair
       let evt = ssevents.new(data) |> support.id(id)
-      ssevents.id_of(evt) == Some(id)
+      assert ssevents.id_of(evt) == Some(id)
     },
   )
 }
@@ -74,15 +83,8 @@ pub fn encode_then_decode_preserves_data_test() -> Nil {
   metamon.forall(safe_text_generator(), fn(data) {
     let evt = ssevents.new(data)
     let wire = ssevents.encode(evt)
-    let assert Ok(items) = decode(wire)
-    case items {
-      [item] ->
-        case item {
-          EventItem(decoded) -> ssevents.data_of(decoded) == data
-          _ -> False
-        }
-      _ -> False
-    }
+    let assert Ok([EventItem(decoded)]) = decode(wire)
+    assert ssevents.data_of(decoded) == data
   })
 }
 
@@ -92,19 +94,14 @@ pub fn encode_then_decode_rewrites_only_line_terminators_test() -> Nil {
   // text with each terminator rewritten to LF: no line is lost or added.
   let piece = generator.element_of(["a", "bc", "\n", "\r", "\r\n", "\r\r\n"])
   metamon.forall(
-    generator.list_of(piece, range.constant(0, 12)) |> generator.no_edges,
+    generator.list_of(piece, generator.range(from: 0, to: 12))
+      |> generator.no_edges,
     fn(pieces) {
       let data = string.concat(pieces)
       let expected = to_lf(data)
-      let assert Ok(items) = decode(ssevents.encode(ssevents.new(data)))
-      case items {
-        [item] ->
-          case item {
-            EventItem(decoded) -> ssevents.data_of(decoded) == expected
-            _ -> False
-          }
-        _ -> False
-      }
+      let assert Ok([EventItem(decoded)]) =
+        decode(ssevents.encode(ssevents.new(data)))
+      assert ssevents.data_of(decoded) == expected
     },
   )
 }
@@ -137,17 +134,9 @@ pub fn encode_then_decode_preserves_named_event_test() -> Nil {
       let #(name, data) = pair
       let evt = support.named(name, data)
       let wire = ssevents.encode(evt)
-      let assert Ok(items) = decode(wire)
-      case items {
-        [item] ->
-          case item {
-            EventItem(decoded) ->
-              ssevents.name_of(decoded) == Some(name)
-              && ssevents.data_of(decoded) == data
-            _ -> False
-          }
-        _ -> False
-      }
+      let assert Ok([EventItem(decoded)]) = decode(wire)
+      assert #(ssevents.name_of(decoded), ssevents.data_of(decoded))
+        == #(Some(name), data)
     },
   )
 }
@@ -159,15 +148,8 @@ pub fn encode_then_decode_preserves_id_test() -> Nil {
       let #(data, id) = pair
       let evt = ssevents.new(data) |> support.id(id)
       let wire = ssevents.encode(evt)
-      let assert Ok(items) = decode(wire)
-      case items {
-        [item] ->
-          case item {
-            EventItem(decoded) -> ssevents.id_of(decoded) == Some(id)
-            _ -> False
-          }
-        _ -> False
-      }
+      let assert Ok([EventItem(decoded)]) = decode(wire)
+      assert ssevents.id_of(decoded) == Some(id)
     },
   )
 }
@@ -176,34 +158,27 @@ pub fn encode_then_decode_preserves_retry_test() -> Nil {
   metamon.forall(
     generator.tuple2(
       safe_text_generator(),
-      generator.int(range.constant(0, 100_000)),
+      generator.int(generator.range(from: 0, to: 100_000)),
     ),
     fn(pair) {
       let #(data, retry_ms) = pair
       let evt = ssevents.new(data) |> ssevents.retry(retry_ms)
       let wire = ssevents.encode(evt)
-      let assert Ok(items) = decode(wire)
-      case items {
-        [item] ->
-          case item {
-            EventItem(decoded) -> ssevents.retry_of(decoded) == Some(retry_ms)
-            _ -> False
-          }
-        _ -> False
-      }
+      let assert Ok([EventItem(decoded)]) = decode(wire)
+      assert ssevents.retry_of(decoded) == Some(retry_ms)
     },
   )
 }
 
 pub fn encode_items_round_trip_count_test() -> Nil {
   metamon.forall(
-    generator.list_of(safe_text_generator(), range.constant(0, 5)),
+    generator.list_of(safe_text_generator(), generator.range(from: 0, to: 5)),
     fn(data_list) {
       let items =
         list.map(data_list, fn(data) { EventItem(ssevents.new(data)) })
       let wire = ssevents.encode_items(items)
       let assert Ok(decoded_items) = decode(wire)
-      list.length(decoded_items) == list.length(items)
+      assert list.length(decoded_items) == list.length(items)
     },
   )
 }
@@ -212,11 +187,8 @@ pub fn comment_round_trips_through_encode_decode_test() -> Nil {
   metamon.forall(safe_non_empty_text_generator(), fn(text) {
     let comment_item = support.comment(text)
     let wire = ssevents.encode_items([comment_item])
-    let assert Ok(items) = decode(wire)
-    case items {
-      [CommentItem(_)] -> True
-      _ -> False
-    }
+    let assert Ok([CommentItem(_)]) = decode(wire)
+    Nil
   })
 }
 
@@ -234,7 +206,7 @@ pub fn encoded_event_ends_with_blank_line_test() -> Nil {
     // Per the SSE wire-format spec, every event terminates with a
     // blank line (`\n\n` for LF or `\r\n\r\n` for CRLF). The
     // default line ending is LF.
-    string.ends_with(wire, "\n\n")
+    assert string.ends_with(wire, "\n\n")
   })
 }
 
@@ -242,7 +214,7 @@ pub fn encoded_event_contains_data_field_test() -> Nil {
   metamon.forall(safe_non_empty_text_generator(), fn(data) {
     let evt = ssevents.new(data)
     let wire = ssevents.encode(evt)
-    string.contains(wire, "data: " <> data)
+    assert string.contains(wire, "data: " <> data)
   })
 }
 
@@ -275,7 +247,7 @@ fn long_data_generator() -> generator.Generator(String) {
       string.repeat("🦊", 2001),
       string.repeat(family, 401),
     ])
-  generator.list_of(piece, range.constant(0, 6))
+  generator.list_of(piece, generator.range(from: 0, to: 6))
   |> generator.map(string.concat)
   |> generator.no_edges
 }
@@ -292,15 +264,15 @@ pub fn encode_then_decode_preserves_long_data_test() -> Nil {
   // the client got an LF the server never sent.
   metamon.forall(long_data_generator(), fn(data) {
     let wire = ssevents.encode(ssevents.new(data))
-    ssevents.decode(<<wire:utf8>>, wide_limits)
-    == Ok([EventItem(ssevents.new(to_lf(data)))])
+    assert ssevents.decode(<<wire:utf8>>, wide_limits)
+      == Ok([EventItem(ssevents.new(to_lf(data)))])
   })
 }
 
 pub fn encode_writes_one_data_line_per_line_of_data_test() -> Nil {
   metamon.forall(long_data_generator(), fn(data) {
     let lines = to_lf(data) |> string.split("\n") |> list.length
-    data_lines(ssevents.encode(ssevents.new(data))) == lines
+    assert data_lines(ssevents.encode(ssevents.new(data))) == lines
   })
 }
 
@@ -310,13 +282,13 @@ pub fn pushed_long_data_round_trips_test() -> Nil {
   metamon.forall(
     generator.tuple2(
       long_data_generator(),
-      generator.int(range.constant(1, 9000)),
+      generator.int(generator.range(from: 1, to: 9000)),
     ),
     fn(input) {
       let #(data, size) = input
       let wire = <<ssevents.encode(ssevents.new(data)):utf8>>
-      pushed(ssevents.new_decoder(wide_limits), wire, size, [])
-      == Ok([EventItem(ssevents.new(to_lf(data)))])
+      assert pushed(ssevents.new_decoder(wide_limits), wire, size, [])
+        == Ok([EventItem(ssevents.new(to_lf(data)))])
     },
   )
 }
