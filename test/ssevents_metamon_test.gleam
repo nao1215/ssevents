@@ -4,6 +4,8 @@
 //// future encoder / decoder change surfaces a regression here
 //// instead of cascading into integration tests.
 
+import gleam/bit_array
+import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
@@ -242,4 +244,101 @@ pub fn encoded_event_contains_data_field_test() -> Nil {
     let wire = ssevents.encode(evt)
     string.contains(wire, "data: " <> data)
   })
+}
+
+// ---------- long data lines ----------
+
+/// Limits wide enough for every line and event the long-data generator
+/// builds, so only the encoder decides whether the data survives.
+const wide_limits =
+  ssevents.Limits(
+    ..ssevents.default_limits,
+    max_line_bytes: 1_000_000,
+    max_event_bytes: 1_000_000,
+  )
+
+fn long_data_generator() -> generator.Generator(String) {
+  // Runs around the old split threshold of 8000 bytes, in one-, two-,
+  // three- and four-byte characters and a seven-code-point grapheme,
+  // mixed with every line terminator.
+  let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}"
+  let piece =
+    generator.element_of([
+      "a",
+      "\n",
+      "\r",
+      "\r\n",
+      string.repeat("x", 4093),
+      string.repeat("x", 8187),
+      string.repeat("é", 2001),
+      string.repeat("あ", 2731),
+      string.repeat("🦊", 2001),
+      string.repeat(family, 401),
+    ])
+  generator.list_of(piece, range.constant(0, 6))
+  |> generator.map(string.concat)
+  |> generator.no_edges
+}
+
+fn data_lines(wire: String) -> Int {
+  wire
+  |> string.split("\n")
+  |> list.count(fn(line) { string.starts_with(line, "data") })
+}
+
+pub fn encode_then_decode_preserves_long_data_test() -> Nil {
+  // The encoder used to split a line longer than 8000 bytes into lines
+  // of 2000 code points, and the decoder joins `data` lines with LF, so
+  // the client got an LF the server never sent.
+  metamon.forall(long_data_generator(), fn(data) {
+    let wire = ssevents.encode(ssevents.new(data))
+    ssevents.decode(<<wire:utf8>>, wide_limits)
+    == Ok([EventItem(ssevents.new(to_lf(data)))])
+  })
+}
+
+pub fn encode_writes_one_data_line_per_line_of_data_test() -> Nil {
+  metamon.forall(long_data_generator(), fn(data) {
+    let lines = to_lf(data) |> string.split("\n") |> list.length
+    data_lines(ssevents.encode(ssevents.new(data))) == lines
+  })
+}
+
+pub fn pushed_long_data_round_trips_test() -> Nil {
+  // The same wire read in chunks, which can end inside a long line or a
+  // character.
+  metamon.forall(
+    generator.tuple2(
+      long_data_generator(),
+      generator.int(range.constant(1, 9000)),
+    ),
+    fn(input) {
+      let #(data, size) = input
+      let wire = <<ssevents.encode(ssevents.new(data)):utf8>>
+      pushed(ssevents.new_decoder(wide_limits), wire, size, [])
+      == Ok([EventItem(ssevents.new(to_lf(data)))])
+    },
+  )
+}
+
+fn pushed(
+  state: ssevents.DecodeState,
+  rest: BitArray,
+  size: Int,
+  acc: List(ssevents.Item),
+) -> Result(List(ssevents.Item), ssevents.SseError) {
+  let total = bit_array.byte_size(rest)
+  case total {
+    0 -> Ok(list.append(acc, ssevents.finish(state)))
+    _ -> {
+      let take = int.min(size, total)
+      let assert Ok(chunk) = bit_array.slice(rest, at: 0, take: take)
+      let assert Ok(tail) = bit_array.slice(rest, at: take, take: total - take)
+      case ssevents.push(state, chunk) {
+        Ok(#(state, items)) ->
+          pushed(state, tail, size, list.append(acc, items))
+        Error(error) -> Error(error)
+      }
+    }
+  }
 }

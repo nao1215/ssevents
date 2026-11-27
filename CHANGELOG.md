@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `encode` no longer splits a `data` line longer than 8000 bytes into lines of 2000 code points. A client joins `data` lines with LF, so the data it received had an LF at each split that the server never sent, and `decode(encode(new(x)))` did not return `x`. Each line of `data` is now one `data` line however long it is, so the data arrives unchanged; `decode` with `default_limits` returns `LineTooLong(8192)` for a line over 8186 bytes of data instead of changing it, and `max_line_bytes` can be raised to read it.
+
 ## [0.18.0] - 2026-11-23
 
 ### Changed
