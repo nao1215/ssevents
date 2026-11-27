@@ -130,41 +130,79 @@ pub fn comment_with_nul_round_trips_test() {
   decode(encode_item(item)) |> should.equal(Ok([item]))
 }
 
-pub fn encode_splits_oversized_data_line_for_decoder_limit_test() {
-  // Regression for #88: prior versions wrote `data:` values verbatim,
-  // so a payload longer than ~8184 bytes produced wire bytes the
-  // default decoder rejected with `LineTooLong(8192)`. The encoder
-  // now caps each `data:` line at 2000 codepoints, keeping every
-  // emitted line under the decoder limit at the cost of inserting
-  // `\n` boundaries at chunk joins (the WHATWG dispatch rule joins
-  // multiple `data:` lines with LF). The round-trip therefore
-  // *parses* on the receive side rather than failing outright; the
-  // decoded value differs from the input by the inserted boundaries,
-  // and callers that need byte-identical fidelity should base64-
-  // encode payloads above this threshold.
-  let payload = string.repeat("x", 10_000)
-  let ev = ssevents.new(payload)
-  let wire = ssevents.encode(ev)
-  let assert Ok([EventItem(decoded)]) = decode(wire)
-  // 10_000 / 2_000 = 5 chunks → 4 inserted boundaries → length grows
-  // by 4 LF characters.
-  string.length(ssevents.data_of(decoded)) |> should.equal(10_004)
+const wide_limits =
+  ssevents.Limits(
+    ..ssevents.default_limits,
+    max_line_bytes: 1_000_000,
+    max_event_bytes: 1_000_000,
+  )
+
+fn round_trip(data: String) -> Result(List(ssevents.Item), ssevents.SseError) {
+  ssevents.decode(<<ssevents.encode(ssevents.new(data)):utf8>>, wide_limits)
 }
 
-pub fn encode_splits_long_line_by_code_points_test() {
-  // A family emoji is one grapheme of seven code points and 25 bytes.
-  // The split used to count graphemes, so 2000 of them made one 50_000
-  // byte `data:` line that the default decoder rejected with
-  // `LineTooLong(8192)`.
+pub fn long_data_line_round_trips_unchanged_test() {
+  // A line longer than 8000 bytes used to be written as several `data`
+  // lines of 2000 code points, which the decoder joins with LF, so the
+  // client got an LF at each split that the server never sent.
   let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}"
-  let data = string.repeat(family, 2001)
-  let wire = ssevents.encode(ssevents.new(data))
-  string.split(wire, "\n")
-  |> list.each(fn(line) { { string.byte_size(line) <= 8192 } |> should.be_true })
-  let assert Ok([EventItem(decoded)]) = decode(wire)
-  ssevents.data_of(decoded)
-  |> string.replace(each: "\n", with: "")
-  |> should.equal(data)
+  [
+    string.repeat("a", 7999),
+    string.repeat("a", 8000),
+    string.repeat("a", 8001),
+    string.repeat("a", 8183),
+    string.repeat("a", 8184),
+    string.repeat("a", 8185),
+    string.repeat("a", 9000),
+    string.repeat("a", 65_536),
+    string.repeat("hello ", 5000),
+    string.repeat("é", 4001),
+    string.repeat("あ", 2667),
+    string.repeat("🦊", 2001),
+    string.repeat(family, 2001),
+  ]
+  |> list.each(fn(data) {
+    let wire = ssevents.encode(ssevents.new(data))
+    wire |> should.equal("data: " <> data <> "\n\n")
+    round_trip(data) |> should.equal(Ok([EventItem(ssevents.new(data))]))
+  })
+}
+
+pub fn long_data_lines_split_only_at_line_breaks_test() {
+  let short = string.repeat("a", 4000)
+  let long = string.repeat("b", 9000)
+  [
+    #(short <> "\n" <> short, short <> "\n" <> short),
+    #(long <> "\n" <> long, long <> "\n" <> long),
+    #(long <> "\r\n" <> long, long <> "\n" <> long),
+    #(long <> "\r" <> long, long <> "\n" <> long),
+    #(long <> "\n\n" <> long <> "\n", long <> "\n\n" <> long <> "\n"),
+  ]
+  |> list.each(fn(pair) {
+    let #(data, expected) = pair
+    let wire = ssevents.encode(ssevents.new(data))
+    let lines =
+      string.split(expected, "\n")
+      |> list.map(fn(line) {
+        case line {
+          "" -> "data:\n"
+          _ -> "data: " <> line <> "\n"
+        }
+      })
+    wire |> should.equal(string.concat(lines) <> "\n")
+    round_trip(data) |> should.equal(Ok([EventItem(ssevents.new(expected))]))
+  })
+}
+
+pub fn long_data_line_over_default_limit_is_refused_not_changed_test() {
+  // `data: ` takes 6 bytes, so 8186 bytes of data is the longest line
+  // `default_limits` reads. A longer one is an error rather than data
+  // with an LF added.
+  let fits = string.repeat("a", 8186)
+  decode(ssevents.encode(ssevents.new(fits)))
+  |> should.equal(Ok([EventItem(ssevents.new(fits))]))
+  decode(ssevents.encode(ssevents.new(fits <> "a")))
+  |> should.equal(Error(ssevents.LineTooLong(8192)))
 }
 
 fn contains_byte(input: BitArray, target: Int) -> Bool {
@@ -177,14 +215,4 @@ fn contains_byte(input: BitArray, target: Int) -> Bool {
       }
     _ -> False
   }
-}
-
-pub fn data_line_of_exactly_8000_bytes_is_not_split_test() {
-  let data = string.repeat("x", 8000)
-  ssevents.encode(ssevents.new(data))
-  |> should.equal("data: " <> data <> "\n\n")
-  ssevents.encode(ssevents.new(data <> "x"))
-  |> string.split("\n")
-  |> list.length
-  |> should.equal(7)
 }

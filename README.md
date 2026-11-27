@@ -103,7 +103,7 @@ The API reference is on [HexDocs](https://hexdocs.pm/ssevents/).
 ## Notes
 
 - `named`, `id` and `comment` return `Error(Nil)` for a value with CR or LF, and `id` also for one with NUL, so a value from a user cannot add lines or fields to the stream or reach the client changed. `new` turns CR and CRLF in `data` into LF, which is how a client reads them anyway.
-- `encode` splits a `data` line longer than 8000 bytes into lines of at most 2000 code points, so that `decode` with `default_limits` can read it. The client joins them with LF, so the data it receives has an LF at each split. `event` and `id` lines are not split, so keep names and ids well under 8000 bytes.
+- `encode` writes each line of `data` as one `data` line, however long, since a client joins `data` lines with LF and a split would add an LF the data does not have. `decode` with `default_limits` reads 8186 bytes of data per line (8192 with `data: `), so raise `max_line_bytes` to read longer lines, and keep names and ids under it too.
 - `retry` removes the field for a value below 0 or above 86_400_000 (24 hours), and `decode` ignores a larger value than `max_retry_value`.
 - As in a browser, `decode` drops an event at the end of the input that has no closing blank line, and reads bytes that are not UTF-8 as U+FFFD.
 

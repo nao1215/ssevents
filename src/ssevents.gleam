@@ -252,13 +252,12 @@ fn clean_data_loop(graphemes: List(String), acc: List(String)) -> String {
 /// Encodes one event, ending with the blank line that makes a client
 /// dispatch it. Lines end with LF.
 ///
-/// A data line longer than 8000 bytes is written as several `data` lines
-/// of at most 2000 code points each, so that `decode` with
-/// `default_limits` can read it. A client joins those lines with LF, so
-/// the data it receives has an LF at each split. Data that has to arrive
-/// unchanged needs lines of at most 8000 bytes. The `event` and `id` lines
-/// are never split, so a name or id longer than about 8000 bytes gives a
-/// stream that `decode` with `default_limits` rejects.
+/// Each line of `data` becomes one `data` line, however long it is,
+/// because a client joins `data` lines with LF and a split would add an
+/// LF the data does not have. `decode` with `default_limits` reads lines
+/// of up to 8192 bytes, which is 8186 bytes of data after `data: `, and
+/// returns `LineTooLong` for a longer one; raise `max_line_bytes` to read
+/// it. The same holds for the `event` and `id` lines.
 ///
 /// ## Examples
 ///
@@ -271,7 +270,6 @@ pub fn encode(event: Event) -> String {
   let data =
     event.data
     |> string.split(on: "\n")
-    |> list.flat_map(split_long_line)
     |> list.map(field_line("data", _))
   block(event.name, event.id, event.retry, data)
 }
@@ -345,21 +343,6 @@ fn field_line(field: String, value: String) -> String {
   case value {
     "" -> field <> ":\n"
     _ -> field <> ": " <> value <> "\n"
-  }
-}
-
-// 2000 code points take at most 8000 bytes in UTF-8, which leaves room for
-// the `data: ` prefix under the default `max_line_bytes` of 8192.
-const max_line_code_points = 2000
-
-fn split_long_line(line: String) -> List(String) {
-  case string.byte_size(line) <= max_line_code_points * 4 {
-    True -> [line]
-    False ->
-      line
-      |> string.to_utf_codepoints
-      |> list.sized_chunk(into: max_line_code_points)
-      |> list.map(string.from_utf_codepoints)
   }
 }
 
